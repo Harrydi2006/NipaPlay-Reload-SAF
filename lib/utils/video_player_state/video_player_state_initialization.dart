@@ -68,6 +68,7 @@ extension VideoPlayerStateInitialization on VideoPlayerState {
     await _loadDanmakuDisplayEffectSettings();
     await _loadSubtitleSettings();
     await _loadDanmakuDisplayArea();
+    await _loadDanmakuVerticalOffset();
     await _loadDanmakuSpeedMultiplier();
     await _loadDanmakuDfmPlusTrackGap();
     await _loadRememberDanmakuOffset();

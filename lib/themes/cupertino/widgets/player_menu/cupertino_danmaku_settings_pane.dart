@@ -302,6 +302,18 @@ class _CupertinoDanmakuSettingsPaneState
                   divisions: 15,
                   onChanged: widget.videoState.setDanmakuSpeedMultiplier,
                 ),
+                _buildSliderTile(
+                  context,
+                  title: '垂直偏移',
+                  description:
+                      '${widget.videoState.danmakuVerticalOffset.round()}px',
+                  value: widget.videoState.danmakuVerticalOffset.clamp(
+                      0.0, VideoPlayerState.maxDanmakuVerticalOffset),
+                  min: 0.0,
+                  max: VideoPlayerState.maxDanmakuVerticalOffset,
+                  divisions: 100,
+                  onChanged: widget.videoState.setDanmakuVerticalOffset,
+                ),
                 if (DanmakuKernelFactory.getKernelType() ==
                     DanmakuRenderEngine.dfmPlus)
                   _buildSliderTile(

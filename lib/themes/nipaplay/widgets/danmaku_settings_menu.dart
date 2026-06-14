@@ -875,6 +875,27 @@ class _DanmakuSettingsMenuState extends State<DanmakuSettingsMenu> {
                   ],
                 ),
               ),
+              // 弹幕垂直偏移（规避刘海屏/挖孔屏遮挡顶部弹幕）
+              Container(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SettingsSlider(
+                      value: videoState.danmakuVerticalOffset.clamp(
+                          0.0, VideoPlayerState.maxDanmakuVerticalOffset),
+                      onChanged: (v) => videoState.setDanmakuVerticalOffset(v),
+                      label: '弹幕垂直偏移',
+                      displayTextBuilder: (v) => '${v.round()}px',
+                      min: 0.0,
+                      max: VideoPlayerState.maxDanmakuVerticalOffset,
+                      step: 2.0,
+                    ),
+                    const SizedBox(height: 4),
+                    const SettingsHintText('将弹幕整体向下移动，规避刘海屏/挖孔屏遮挡顶部弹幕（默认0px）'),
+                  ],
+                ),
+              ),
               // DFM+ 弹幕轨道间距（仅 DFM+ 引擎显示）
               if (DanmakuKernelFactory.getKernelType() ==
                   DanmakuRenderEngine.dfmPlus)

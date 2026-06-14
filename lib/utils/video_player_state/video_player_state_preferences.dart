@@ -2162,6 +2162,33 @@ extension VideoPlayerStatePreferences on VideoPlayerState {
     }
   }
 
+  // 读取弹幕垂直偏移
+  Future<void> _loadDanmakuVerticalOffset() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getDouble(_danmakuVerticalOffsetKey) ?? 0.0;
+    _danmakuVerticalOffset = _clampDanmakuVerticalOffset(stored);
+    _notifyListeners();
+  }
+
+  double _clampDanmakuVerticalOffset(double value) {
+    if (value < 0.0) return 0.0;
+    if (value > VideoPlayerState.maxDanmakuVerticalOffset) {
+      return VideoPlayerState.maxDanmakuVerticalOffset;
+    }
+    return value;
+  }
+
+  // 设置弹幕垂直偏移（向下移动的逻辑像素，用于规避刘海屏遮挡）
+  Future<void> setDanmakuVerticalOffset(double offset) async {
+    final clamped = _clampDanmakuVerticalOffset(offset);
+    if (_danmakuVerticalOffset != clamped) {
+      _danmakuVerticalOffset = clamped;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_danmakuVerticalOffsetKey, clamped);
+      _notifyListeners();
+    }
+  }
+
   double _normalizeDanmakuSpeed(double value) {
     if (value < _minDanmakuSpeedMultiplier) {
       return _minDanmakuSpeedMultiplier;

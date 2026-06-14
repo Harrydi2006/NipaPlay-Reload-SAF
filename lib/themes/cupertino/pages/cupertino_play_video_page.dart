@@ -96,7 +96,7 @@ class _CupertinoPlayVideoPageState extends State<CupertinoPlayVideoPage> {
   Widget _buildDanmakuOverlay(VideoPlayerState videoState) {
     final isNextKernel = DanmakuKernelFactory.getKernelType() ==
         DanmakuRenderEngine.nipaplayNext;
-    return ValueListenableBuilder<double>(
+    final overlay = ValueListenableBuilder<double>(
       valueListenable: videoState.playbackTimeMs,
       child: DanmakuOverlay(
         key: ValueKey(
@@ -125,6 +125,16 @@ class _CupertinoPlayVideoPageState extends State<CupertinoPlayVideoPage> {
           opacity: videoState.mappedDanmakuOpacity,
         );
       },
+    );
+
+    // 弹幕垂直偏移：整体下移弹幕图层，规避刘海屏/挖孔屏遮挡顶部弹幕。
+    final double verticalOffset = videoState.danmakuVerticalOffset;
+    if (verticalOffset <= 0) {
+      return overlay;
+    }
+    return Padding(
+      padding: EdgeInsets.only(top: verticalOffset),
+      child: overlay,
     );
   }
 

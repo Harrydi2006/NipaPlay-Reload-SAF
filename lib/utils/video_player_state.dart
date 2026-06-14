@@ -554,6 +554,11 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   double _danmakuDisplayArea =
       1.0; // 默认全屏显示（0.0=单行，1.0=全屏，0.67=2/3，0.33=1/3，0.25=1/4，0.125=1/8）
 
+  // 弹幕垂直偏移设置：把整个弹幕图层整体向下移动的逻辑像素，用于规避刘海屏/挖孔屏遮挡顶部弹幕。
+  final String _danmakuVerticalOffsetKey = 'danmaku_vertical_offset';
+  static const double maxDanmakuVerticalOffset = 200.0;
+  double _danmakuVerticalOffset = 0.0;
+
   // 弹幕速度设置
   final String _danmakuSpeedMultiplierKey = 'danmaku_speed_multiplier';
   final double _minDanmakuSpeedMultiplier = 0.5;
@@ -1233,6 +1238,7 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   String get subtitleFontDir => _subtitleFontDir;
   SubtitleStyleOverrideMode get subtitleOverrideMode => _subtitleOverrideMode;
   double get danmakuDisplayArea => _danmakuDisplayArea;
+  double get danmakuVerticalOffset => _danmakuVerticalOffset;
   double get danmakuSpeedMultiplier => _danmakuSpeedMultiplier;
   double get danmakuDfmPlusTrackGap => _danmakuDfmPlusTrackGap;
   double get danmakuScrollDurationSeconds =>
