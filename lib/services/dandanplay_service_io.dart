@@ -1092,7 +1092,10 @@ class DandanplayService {
     }
   }
 
-  static Future<Map<String, dynamic>> getVideoInfo(String videoPath) async {
+  static Future<Map<String, dynamic>> getVideoInfo(
+    String videoPath, {
+    bool prefetchDanmaku = true,
+  }) async {
     if (kIsWeb) {
       throw Exception('Web版不支持从本地文件获取视频信息。');
     }
@@ -1110,6 +1113,7 @@ class DandanplayService {
             fileName: remoteHead.fileName,
             fileHash: remoteHead.hash,
             fileSize: remoteHead.fileSize,
+            prefetchDanmaku: prefetchDanmaku,
           );
         } catch (e) {
           debugPrint('DandanplayService: 获取远程媒体信息失败: $e');
@@ -1123,6 +1127,7 @@ class DandanplayService {
           fileName: metadata.name,
           fileHash: metadata.contentHash,
           fileSize: metadata.size,
+          prefetchDanmaku: prefetchDanmaku,
         );
       }
 
@@ -1141,6 +1146,7 @@ class DandanplayService {
         fileName: fileName,
         fileHash: fileHash,
         fileSize: fileSize,
+        prefetchDanmaku: prefetchDanmaku,
       );
     } catch (e) {
       throw Exception('获取视频信息失败: ${e.toString()}');
@@ -1151,11 +1157,16 @@ class DandanplayService {
     required String fileName,
     required String fileHash,
     required int fileSize,
+    bool prefetchDanmaku = true,
   }) async {
     // 尝试从缓存获取视频信息
     final cachedInfo = await getCachedVideoInfo(fileHash);
     if (cachedInfo != null) {
-      if (cachedInfo['matches'] != null && cachedInfo['matches'].isNotEmpty) {
+      // 扫描场景（prefetchDanmaku=false）只需要匹配信息，跳过弹幕下载，
+      // 否则每个文件都会触发一次弹幕网络请求，弱网下会让扫描卡死。
+      if (prefetchDanmaku &&
+          cachedInfo['matches'] != null &&
+          cachedInfo['matches'].isNotEmpty) {
         final match = cachedInfo['matches'][0];
         if (match['episodeId'] != null && match['animeId'] != null) {
           try {
@@ -1220,7 +1231,9 @@ class DandanplayService {
 
         await saveVideoInfoToCache(fileHash, data);
 
-        if (data['matches'] != null && data['matches'].isNotEmpty) {
+        if (prefetchDanmaku &&
+            data['matches'] != null &&
+            data['matches'].isNotEmpty) {
           final match = data['matches'][0];
           if (match['episodeId'] != null && match['animeId'] != null) {
             try {
@@ -1252,7 +1265,8 @@ class DandanplayService {
               _ensureVideoInfoTitles(fallback);
               await saveVideoInfoToCache(fileHash, fallback);
 
-              if (fallback['matches'] != null &&
+              if (prefetchDanmaku &&
+                  fallback['matches'] != null &&
                   fallback['matches'] is List &&
                   fallback['matches'].isNotEmpty) {
                 final match = fallback['matches'][0];

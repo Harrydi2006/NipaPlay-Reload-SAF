@@ -1103,7 +1103,10 @@ class DandanplayService {
     }
   }
 
-  static Future<Map<String, dynamic>> getVideoInfo(String videoPath) async {
+  static Future<Map<String, dynamic>> getVideoInfo(
+    String videoPath, {
+    bool prefetchDanmaku = true,
+  }) async {
     final webApiBaseUrl = await _getWebApiBaseUrl();
     if (webApiBaseUrl != null) {
       try {

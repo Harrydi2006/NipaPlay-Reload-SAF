@@ -86,6 +86,12 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   final Map<String, List<io.FileSystemEntity>> _expandedFolderContents = {};
   final Set<String> _expandedLocalFolders = {};
   final Set<String> _loadingFolders = {};
+
+  // Android SAF 一次递归扫描会返回某个根 content:// 目录下的全部视频文件（带
+  // relativePath）。把这份结果按根 URI 缓存下来，展开子目录时直接从缓存按层级
+  // 取“直接子项”，从而在本地库管理里重建出和 PC 一致的目录树，而不必为每个子目录
+  // 都重新发起一次原生扫描（SAF 子目录也没有独立可复用的 tree URI）。
+  final Map<String, List<AndroidSafFileEntry>> _safScanCache = {};
   final ScrollController _listScrollController = ScrollController();
   final ScrollController _webdavScrollController = ScrollController();
   final ScrollController _smbScrollController = ScrollController();
@@ -640,32 +646,25 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   Future<List<io.FileSystemEntity>> _getDirectoryContents(String path) async {
     final List<io.FileSystemEntity> contents = [];
 
-    // 处理 Android SAF content:// URI
-    if (io.Platform.isAndroid && AndroidSafService.isSafUri(path)) {
+    // 处理 Android SAF：根目录是 content:// URI，子目录是我们构造的 safdir:// 虚拟路径。
+    // 两者都基于“根目录一次递归扫描的缓存”按层级取直接子项。
+    if (io.Platform.isAndroid &&
+        (AndroidSafService.isSafUri(path) || _isSafVirtualDir(path))) {
       try {
-        final List<AndroidSafFileEntry> safEntries =
-            await AndroidSafService.scanDirectory(path);
-        for (final entry in safEntries) {
-          if (entry.size == 0 && entry.relativePath.endsWith('/')) {
-            // 这是一个目录，创建一个虚拟的 Directory 对象
-            // 注意：SAF 目录无法直接转为 io.Directory，我们跳过它
-            // 实际的子目录展开需要通过 SAF 重新扫描
-            continue;
-          } else {
-            // 这是一个文件
-            String extension = p.extension(entry.name).toLowerCase();
-            if (_batchMatchVideoExtensions.contains(extension)) {
-              // content URI 作为唯一标识保留在 path 中，显示名另行从 name 解码
-              contents.add(io.File(entry.uri));
-            }
-          }
+        final String rootUri =
+            _isSafVirtualDir(path) ? _safVirtualDirRoot(path) : path;
+        final String prefix =
+            _isSafVirtualDir(path) ? _safVirtualDirPrefix(path) : '';
+
+        List<AndroidSafFileEntry>? entries = _safScanCache[rootUri];
+        if (entries == null) {
+          entries = await AndroidSafService.scanDirectory(rootUri);
+          _safScanCache[rootUri] = entries;
         }
+
+        contents.addAll(_buildSafImmediateChildren(rootUri, entries, prefix));
       } catch (e) {
-        if (mounted) {
-          setState(() {
-            // _scanMessage = "加载SAF文件夹内容失败: $path ($e)";
-          });
-        }
+        debugPrint('加载SAF文件夹内容失败: $path ($e)');
       }
     } else {
       // 处理普通文件系统路径
@@ -699,28 +698,117 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
     return contents;
   }
 
+  // ===== Android SAF 虚拟目录路径：用于在本地库管理里重建目录树 =====
+  // 真实文件/根目录用 content:// URI；子目录没有可复用的 tree URI，因此用
+  // safdir://nipaplay/?root=<根URI>&prefix=<相对前缀/> 这种自定义串作为标识，
+  // 在 _getDirectoryContents 里据此从根目录扫描缓存中取出该层的直接子项。
+  static const String _safVirtualDirScheme = 'safdir://nipaplay/';
+
+  static bool _isSafVirtualDir(String path) {
+    return path.startsWith(_safVirtualDirScheme);
+  }
+
+  static String _buildSafVirtualDirPath(String rootUri, String prefix) {
+    final encodedRoot = Uri.encodeQueryComponent(rootUri);
+    final encodedPrefix = Uri.encodeQueryComponent(prefix);
+    return '$_safVirtualDirScheme?root=$encodedRoot&prefix=$encodedPrefix';
+  }
+
+  static String _safVirtualDirRoot(String path) {
+    final uri = Uri.tryParse(path);
+    return uri?.queryParameters['root'] ?? '';
+  }
+
+  static String _safVirtualDirPrefix(String path) {
+    final uri = Uri.tryParse(path);
+    return uri?.queryParameters['prefix'] ?? '';
+  }
+
+  /// 取虚拟目录的显示名：相对前缀去掉结尾 '/' 后的最后一段。
+  static String _safVirtualDirName(String path) {
+    var prefix = _safVirtualDirPrefix(path);
+    if (prefix.endsWith('/')) {
+      prefix = prefix.substring(0, prefix.length - 1);
+    }
+    final lastSlash = prefix.lastIndexOf('/');
+    final name = lastSlash >= 0 ? prefix.substring(lastSlash + 1) : prefix;
+    return name.isNotEmpty ? name : path;
+  }
+
+  /// 目录节点的显示名：SAF 虚拟目录取相对前缀末段，普通路径用 p.basename。
+  static String _folderNodeDisplayName(String path) {
+    if (_isSafVirtualDir(path)) {
+      return _safVirtualDirName(path);
+    }
+    return p.basename(path);
+  }
+
+  /// 从“根目录递归扫描结果”里取出某一层（prefix）的直接子项：
+  /// 直接文件返回 io.File(content://uri)，直接子目录返回携带 safdir:// 标识的 io.Directory。
+  List<io.FileSystemEntity> _buildSafImmediateChildren(
+    String rootUri,
+    List<AndroidSafFileEntry> entries,
+    String prefix,
+  ) {
+    final List<io.FileSystemEntity> result = [];
+    // 用 LinkedHashSet 保持首次出现顺序，避免同一子目录重复添加。
+    final Set<String> seenSubDirs = <String>{};
+
+    for (final entry in entries) {
+      final relativePath = entry.relativePath;
+      if (prefix.isNotEmpty && !relativePath.startsWith(prefix)) {
+        continue;
+      }
+      final rest = relativePath.substring(prefix.length);
+      if (rest.isEmpty) continue;
+
+      final slashIndex = rest.indexOf('/');
+      if (slashIndex >= 0) {
+        // 处于更深的子目录里：第一段是本层的一个直接子目录。
+        final segment = rest.substring(0, slashIndex);
+        if (segment.isEmpty) continue;
+        if (seenSubDirs.add(segment)) {
+          result.add(io.Directory(
+            _buildSafVirtualDirPath(rootUri, '$prefix$segment/'),
+          ));
+        }
+      } else {
+        // 本层的直接文件。
+        final extension = p.extension(entry.name).toLowerCase();
+        if (_batchMatchVideoExtensions.contains(extension)) {
+          result.add(io.File(entry.uri));
+        }
+      }
+    }
+
+    return result;
+  }
+
   // 排序内容的方法
   void _sortContents(List<io.FileSystemEntity> contents) {
+    // 显示名：SAF 虚拟目录/content:// 文件都不能用 p.basename，否则按乱码串排序。
+    String displayName(io.FileSystemEntity e) {
+      if (e is io.Directory) return _folderNodeDisplayName(e.path);
+      return _basenameOrUrlLastSegment(e.path);
+    }
+
     contents.sort((a, b) {
       // 总是优先显示文件夹
       if (a is io.Directory && b is io.File) return -1;
       if (a is io.File && b is io.Directory) return 1;
+
+      final nameAsc =
+          displayName(a).toLowerCase().compareTo(displayName(b).toLowerCase());
 
       // 同种类型文件按选择的排序方式排序
       int result = 0;
 
       switch (_sortOption) {
         case 0: // 文件名升序
-          result = p
-              .basename(a.path)
-              .toLowerCase()
-              .compareTo(p.basename(b.path).toLowerCase());
+          result = nameAsc;
           break;
         case 1: // 文件名降序
-          result = p
-              .basename(b.path)
-              .toLowerCase()
-              .compareTo(p.basename(a.path).toLowerCase());
+          result = -nameAsc;
           break;
         case 2: // 修改时间升序（旧到新）
           try {
@@ -728,11 +816,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             final bModified = b.statSync().modified;
             result = aModified.compareTo(bModified);
           } catch (e) {
-            // 如果获取修改时间失败，回退到文件名排序
-            result = p
-                .basename(a.path)
-                .toLowerCase()
-                .compareTo(p.basename(b.path).toLowerCase());
+            // SAF 等无法 stat 时回退到文件名排序
+            result = nameAsc;
           }
           break;
         case 3: // 修改时间降序（新到旧）
@@ -741,11 +826,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             final bModified = b.statSync().modified;
             result = bModified.compareTo(aModified);
           } catch (e) {
-            // 如果获取修改时间失败，回退到文件名排序
-            result = p
-                .basename(a.path)
-                .toLowerCase()
-                .compareTo(p.basename(b.path).toLowerCase());
+            result = nameAsc;
           }
           break;
         case 4: // 大小升序（小到大）
@@ -754,11 +835,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             final bSize = b is io.File ? b.lengthSync() : 0;
             result = aSize.compareTo(bSize);
           } catch (e) {
-            // 如果获取大小失败，回退到文件名排序
-            result = p
-                .basename(a.path)
-                .toLowerCase()
-                .compareTo(p.basename(b.path).toLowerCase());
+            result = nameAsc;
           }
           break;
         case 5: // 大小降序（大到小）
@@ -767,18 +844,11 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             final bSize = b is io.File ? b.lengthSync() : 0;
             result = bSize.compareTo(aSize);
           } catch (e) {
-            // 如果获取大小失败，回退到文件名排序
-            result = p
-                .basename(a.path)
-                .toLowerCase()
-                .compareTo(p.basename(b.path).toLowerCase());
+            result = nameAsc;
           }
           break;
         default:
-          result = p
-              .basename(a.path)
-              .toLowerCase()
-              .compareTo(p.basename(b.path).toLowerCase());
+          result = nameAsc;
       }
 
       return result;
@@ -911,7 +981,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             LibraryManagementFolderRow(
-              title: p.basename(dirPath),
+              title: _folderNodeDisplayName(dirPath),
               indent: indent,
               expanded: expanded,
               loading: loading,
@@ -1265,6 +1335,11 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
       // 只在扫描刚结束时检查
       if (!scanService.isScanning && scanService.justFinishedScanning) {
         print('扫描刚结束，准备检查是否显示指导弹窗');
+
+        // 扫描结束后清空 SAF 扫描缓存与已展开内容，确保目录树反映最新结果。
+        _safScanCache.clear();
+        _expandedFolderContents.clear();
+        _loadingFolders.clear();
 
         // 如果没有文件，或者扫描文件夹为空，显示指导弹窗
         if ((scanService.totalFilesFound == 0 ||
@@ -2615,6 +2690,18 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
 
   // 获取显示用的文件夹路径（iOS使用相对路径，其他平台使用绝对路径）
   Future<String> _getDisplayPath(String folderPath) async {
+    // Android SAF content:// URI：原始串是 URL 编码的文档 ID，直接展示是乱码。
+    // 解码后取 "/tree/" 之后的文档 ID（形如 primary:Movies/.nas）作为可读路径。
+    if (AndroidSafService.isSafUri(folderPath)) {
+      final decoded = Uri.decodeComponent(folderPath);
+      const treeMarker = '/tree/';
+      final markerIndex = decoded.indexOf(treeMarker);
+      if (markerIndex >= 0) {
+        final docId = decoded.substring(markerIndex + treeMarker.length);
+        if (docId.isNotEmpty) return docId;
+      }
+      return decoded;
+    }
     if (io.Platform.isIOS) {
       try {
         final appDir = await StorageService.getAppStorageDirectory();
@@ -2671,7 +2758,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                 children: [
                   Expanded(
                     child: Text(
-                      p.basename(folderPath),
+                      _basenameOrUrlLastSegment(folderPath),
                       style: TextStyle(color: textColor, fontSize: 16),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2711,7 +2798,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                               context: context,
                               title: '确认扫描',
                               content:
-                                  '将对文件夹 "${p.basename(folderPath)}" 进行智能扫描：\n\n• 检测文件夹内容是否有变化\n• 如无变化将快速跳过\n• 如有变化将进行全面扫描\n\n开始扫描？',
+                                  '将对文件夹 "${_basenameOrUrlLastSegment(folderPath)}" 进行智能扫描：\n\n• 检测文件夹内容是否有变化\n• 如无变化将快速跳过\n• 如有变化将进行全面扫描\n\n开始扫描？',
                               actions: <Widget>[
                                 HoverScaleTextButton(
                                   child: Text('取消',

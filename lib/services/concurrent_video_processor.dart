@@ -138,8 +138,11 @@ class ConcurrentVideoProcessor {
   static Future<VideoProcessResult> _processSingleVideoPath(
       String videoPath) async {
     try {
-      final videoInfo = await DandanplayService.getVideoInfo(videoPath)
-          .timeout(_requestTimeout, onTimeout: () {
+      // 扫描阶段只做匹配，不预取弹幕（弹幕在播放时再拉）。
+      // 否则每个文件都会触发一次弹幕网络请求，弱网下会让整次扫描卡死。
+      final videoInfo =
+          await DandanplayService.getVideoInfo(videoPath, prefetchDanmaku: false)
+              .timeout(_requestTimeout, onTimeout: () {
         throw TimeoutException('获取视频信息超时 (${_displayName(videoPath)})');
       });
 
@@ -255,12 +258,13 @@ class ConcurrentVideoProcessor {
   }
 
   static String _displayName(String path) {
-    final uri = Uri.tryParse(path);
-    if (uri != null && uri.scheme == 'content') {
-      final segments = uri.pathSegments;
-      if (segments.isNotEmpty) {
-        return Uri.decodeComponent(segments.last);
-      }
+    if (path.toLowerCase().startsWith('content://')) {
+      // SAF 文档 ID 把真实路径整体编码进 URI，解码后仍带 primary:Movies/... 前缀，
+      // 需再取最后一个 '/' 之后的部分才是真正的文件名。
+      final decoded = Uri.decodeComponent(path);
+      final lastSlash = decoded.lastIndexOf('/');
+      final tail = lastSlash >= 0 ? decoded.substring(lastSlash + 1) : decoded;
+      return tail.isNotEmpty ? tail : path;
     }
     return p.basename(path);
   }
