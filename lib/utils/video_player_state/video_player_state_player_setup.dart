@@ -51,12 +51,17 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
     // 检查是否是流媒体（jellyfin://协议、emby://协议）
     bool isJellyfinStream = videoPath.startsWith('jellyfin://');
     bool isEmbyStream = videoPath.startsWith('emby://');
+    // Android SAF content:// URI 无法用 dart:io.File 判断存在性，交给底层播放器处理
+    bool isSafUri = videoPath.startsWith('content://');
     PlaybackSession? resolvedSession = playbackSession;
     String? resolvedActualPlayUrl = actualPlayUrl;
 
-    // 对于本地文件才检查存在性，网络URL和流媒体默认认为"存在"
-    bool fileExists =
-        isNetworkUrl || isJellyfinStream || isEmbyStream || kIsWeb;
+    // 对于本地文件才检查存在性，网络URL/流媒体/SAF URI 默认认为"存在"
+    bool fileExists = isNetworkUrl ||
+        isJellyfinStream ||
+        isEmbyStream ||
+        isSafUri ||
+        kIsWeb;
 
     // 为网络URL添加特定日志
     if (isNetworkUrl) {
@@ -77,7 +82,11 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
       _notifyListeners();
     }
 
-    if (!kIsWeb && !isNetworkUrl && !isJellyfinStream && !isEmbyStream) {
+    if (!kIsWeb &&
+        !isNetworkUrl &&
+        !isJellyfinStream &&
+        !isEmbyStream &&
+        !isSafUri) {
       // 使用FilePickerService处理文件路径问题
       if (Platform.isIOS) {
         final filePickerService = FilePickerService();

@@ -746,6 +746,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
           lowerPath.startsWith('https://') ||
           lowerPath.startsWith('jellyfin://') ||
           lowerPath.startsWith('emby://') ||
+          lowerPath.startsWith('content://') || // Android SAF：非真实文件路径，交给底层播放器
           MediaSourceUtils.isWebDavPath(filePath) ||
           MediaSourceUtils.isSmbPath(filePath);
 
