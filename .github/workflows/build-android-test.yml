@@ -1,0 +1,180 @@
+name: Build Android (Test APK)
+
+# 手动触发，在 fork 上免签名密钥构建可安装的测试 APK。
+# 使用 workflow 内临时生成的 keystore 自签名，仅供真机自测，
+# 与官方发布签名不同，无法覆盖安装官方版本。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Android Test APK
+    runs-on: ubuntu-latest
+    env:
+      FVP_DEPS_URL: https://github.com/wang-bin/mdk-sdk/releases/latest/download/
+      FVP_DEPS_LATEST: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Free workspace disk (pre-cache)
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android/sdk/system-images || true
+          sudo rm -rf /usr/local/lib/android/sdk/emulator || true
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/* || true
+          df -h
+
+      - name: Setup Flutter Environment
+        id: setup
+        uses: ./.github/actions/setup-flutter
+
+      - name: Generate build info json
+        shell: bash
+        run: python3 .github/workflows/scripts/generate-build-info-json.py assets/build_info.json
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses >/dev/null
+          set -o pipefail
+
+      - name: Install 7zip dependency
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full
+
+      - name: Prefetch MDK SDK for fvp
+        shell: bash
+        run: |
+          set -euo pipefail
+          FVP_VERSION=$(awk '
+            /^  fvp:/ {flag=1; next}
+            flag {
+              if ($0 ~ /^    version:/) { gsub(/"/, "", $2); print $2; exit }
+              if ($0 !~ /^    /) { exit }
+            }
+          ' pubspec.lock)
+          if [ -z "$FVP_VERSION" ]; then
+            echo "未能在 pubspec.lock 中找到 fvp 依赖的版本号。"
+            exit 1
+          fi
+          CACHE_BASE="$HOME/.pub-cache/hosted/pub.dev"
+          ANDROID_DIR="$CACHE_BASE/fvp-$FVP_VERSION/android"
+          MDK_MARKER="$ANDROID_DIR/mdk-sdk/lib/cmake/FindMDK.cmake"
+          if [ -f "$MDK_MARKER" ]; then
+            echo "已存在 MDK 依赖，跳过下载。"
+            exit 0
+          fi
+          mkdir -p "$ANDROID_DIR"
+          ARCHIVE="$ANDROID_DIR/mdk-sdk-android.7z"
+          MDK_URL="${FVP_DEPS_URL:-https://github.com/wang-bin/mdk-sdk/releases/latest/download/}/mdk-sdk-android.7z"
+          echo "Downloading mdk-sdk from $MDK_URL"
+          curl -L --fail --retry 5 --retry-all-errors -o "$ARCHIVE" "$MDK_URL"
+          7z x "$ARCHIVE" -o"$ANDROID_DIR" >/dev/null
+          rm -f "$ARCHIVE"
+          if [ ! -f "$MDK_MARKER" ]; then
+            echo "mdk-sdk 解压失败"
+            exit 1
+          fi
+
+      - name: Configure Gradle
+        shell: bash
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          org.gradle.daemon=true
+          EOF
+
+      - name: Install Android build tools (NDK + cmake)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "${SDK_ROOT}" ]; then
+            echo "错误：ANDROID_SDK_ROOT/ANDROID_HOME 未设置，无法安装 NDK。"
+            exit 1
+          fi
+          NDK_VERSION="$(grep -E '^[[:space:]]*ndkVersion[[:space:]]*=' -m 1 android/app/build.gradle | sed -E 's/.*['\''"]([^'\''"]+)['\''"].*/\1/')"
+          if [ -z "${NDK_VERSION}" ]; then
+            echo "错误：未能从 android/app/build.gradle 解析 ndkVersion。"
+            exit 1
+          fi
+          set +o pipefail
+          yes 2>/dev/null | sdkmanager --sdk_root="${SDK_ROOT}" "build-tools;29.0.3" "ndk;${NDK_VERSION}" "cmake;3.22.1"
+          set -o pipefail
+          NDK_DIR="${SDK_ROOT}/ndk/${NDK_VERSION}"
+          if [ ! -d "${NDK_DIR}" ]; then
+            echo "错误：NDK 目录不存在：${NDK_DIR}"
+            exit 1
+          fi
+          {
+            echo "ANDROID_SDK_ROOT=${SDK_ROOT}"
+            echo "ANDROID_HOME=${SDK_ROOT}"
+            echo "ANDROID_NDK_HOME=${NDK_DIR}"
+            echo "ANDROID_NDK_ROOT=${NDK_DIR}"
+            echo "NDK_HOME=${NDK_DIR}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Android APK (release, split per abi)
+        shell: bash
+        run: |
+          flutter build apk --release --split-per-abi
+
+      - name: Sign APKs with a self-generated keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 临时签名密钥，仅用于自测，不需要任何 secret。
+          keytool -genkeypair -v \
+            -keystore test.jks \
+            -storepass nipatest -keypass nipatest \
+            -alias nipatest -keyalg RSA -keysize 2048 -validity 3650 \
+            -dname "CN=NipaPlay Test, OU=Test, O=Test, L=Test, S=Test, C=CN"
+
+          mkdir -p build/app/outputs/apk/test
+          shopt -s nullglob
+          for input_apk in build/app/outputs/flutter-apk/app-*-release.apk; do
+            base=$(basename "$input_apk" .apk)
+            aligned="aligned-${base}.apk"
+            output_apk="build/app/outputs/apk/test/NipaPlay-test-${base}.apk"
+            "$ANDROID_HOME/build-tools/29.0.3/zipalign" -v -p 4 "$input_apk" "$aligned"
+            "$ANDROID_HOME/build-tools/29.0.3/apksigner" sign \
+              --ks test.jks \
+              --ks-pass pass:nipatest \
+              --ks-key-alias nipatest \
+              --key-pass pass:nipatest \
+              --out "$output_apk" \
+              "$aligned"
+            rm -f "$aligned"
+            echo "已签名: $output_apk"
+          done
+          rm -f test.jks
+          ls -lh build/app/outputs/apk/test/
+
+      - name: Upload Test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NipaPlay-Test-Android
+          path: build/app/outputs/apk/test/*.apk
+          if-no-files-found: error

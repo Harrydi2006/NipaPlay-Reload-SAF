@@ -28,6 +28,10 @@ class VideoProcessResult {
 class ConcurrentVideoProcessor {
   static const int _maxConcurrency = 4; // 最大并发数
   static const Duration _requestTimeout = Duration(seconds: 20);
+  // 单个文件的“整体”处理超时（含网络匹配 + 本地 DB 读写）。
+  // 必须大于 _requestTimeout，用来兜底任何未加超时的 await（如 DB 写入、
+  // SAF 读取阻塞），确保任意单文件都不会让整次扫描永远停在最后一个。
+  static const Duration _perFileTimeout = Duration(seconds: 40);
 
   /// 并发处理视频文件列表
   static Future<List<VideoProcessResult>> processVideos(
@@ -92,11 +96,29 @@ class ConcurrentVideoProcessor {
     for (String videoPath in pathsToProcess) {
       final future = semaphore.acquire().then((_) async {
         try {
-          final result = await _processSingleVideoPath(videoPath);
+          final result = await _processSingleVideoPath(videoPath).timeout(
+            _perFileTimeout,
+            onTimeout: () => VideoProcessResult(
+              filePath: videoPath,
+              success: false,
+              errorMessage: '处理超时',
+            ),
+          );
           processedCount++;
           onProgress?.call(
               processedCount, videoPaths.length, _displayName(videoPath));
           return result;
+        } catch (e) {
+          // 任何意外异常都不应让该文件的 future 悬挂，导致整次扫描卡死。
+          processedCount++;
+          onProgress?.call(
+              processedCount, videoPaths.length, _displayName(videoPath));
+          return VideoProcessResult(
+            filePath: videoPath,
+            success: false,
+            errorMessage:
+                '错误: ${e.toString().substring(0, min(e.toString().length, 30))}',
+          );
         } finally {
           semaphore.release();
         }

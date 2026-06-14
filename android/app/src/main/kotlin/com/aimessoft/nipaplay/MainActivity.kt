@@ -32,6 +32,13 @@ import androidx.documentfile.provider.DocumentFile
 import java.security.MessageDigest
 
 class MainActivity: FlutterActivity() {
+    companion object {
+        // 媒体库扫描支持的视频扩展名（与 Dart 端 _batchMatchVideoExtensions 保持一致）。
+        private val SUPPORTED_VIDEO_EXTENSIONS = setOf(
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ts", "m2ts"
+        )
+    }
+
     private val STORAGE_CHANNEL = "custom_storage_channel"
     private val FILE_SELECTOR_CHANNEL = "plugins.flutter.io/file_selector"
     private val SAF_CHANNEL = "nipaplay/android_saf"
@@ -84,6 +91,10 @@ class MainActivity: FlutterActivity() {
                 }
                 "checkDirectoryPermissions" -> {
                     val directoryPath = call.argument<String>("path") ?: ""
+                    if (directoryPath.startsWith("content://", ignoreCase = true)) {
+                        result.success(checkSafDirectoryAccess(directoryPath))
+                        return@setMethodCallHandler
+                    }
                     val directoryFile = File(directoryPath)
                     val checkResult = mapOf(
                         "exists" to directoryFile.exists(),
@@ -107,6 +118,13 @@ class MainActivity: FlutterActivity() {
                     }
                     
                     try {
+                        // Android 10+ 的 SAF 目录返回的是 content:// URI，
+                        // 不能用 File().canRead() 判断（永远 false），必须走 DocumentFile。
+                        if (path.startsWith("content://", ignoreCase = true)) {
+                            result.success(checkSafDirectoryAccess(path))
+                            return@setMethodCallHandler
+                        }
+
                         val dir = File(path)
                         val canRead = dir.canRead()
                         val canWrite = dir.canWrite()
@@ -522,6 +540,27 @@ class MainActivity: FlutterActivity() {
         return root.exists() && root.isDirectory && root.canRead()
     }
 
+    // SAF content:// 目录的访问能力检查。File().canRead() 对 content URI 永远返回
+    // false，因此 Android 10+ 选中的目录必须用 DocumentFile 判断，否则会误报“权限不足”。
+    private fun checkSafDirectoryAccess(uriString: String): Map<String, Any> {
+        return try {
+            val uri = Uri.parse(uriString)
+            val docFile = DocumentFile.fromTreeUri(this, uri)
+            if (docFile == null) {
+                mapOf("exists" to false, "canRead" to false, "canWrite" to false)
+            } else {
+                mapOf(
+                    "exists" to docFile.exists(),
+                    "canRead" to docFile.canRead(),
+                    "canWrite" to docFile.canWrite()
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error checking SAF directory access: $uriString", e)
+            mapOf("exists" to false, "canRead" to false, "canWrite" to false)
+        }
+    }
+
     private fun scanSafDirectory(treeUriString: String): List<Map<String, Any>> {
         val treeUri = Uri.parse(treeUriString)
         val root = DocumentFile.fromTreeUri(this, treeUri)
@@ -577,7 +616,7 @@ class MainActivity: FlutterActivity() {
 
     private fun isSupportedVideoFileName(name: String): Boolean {
         val extension = name.substringAfterLast('.', "").lowercase()
-        return extension == "mp4" || extension == "mkv"
+        return extension in SUPPORTED_VIDEO_EXTENSIONS
     }
 
     private fun getSafFileMetadata(uriString: String): Map<String, Any> {

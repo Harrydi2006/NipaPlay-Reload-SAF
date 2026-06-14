@@ -74,6 +74,12 @@ class StorageService {
           debugPrint('目录权限检查失败: 无法读取或不存在');
           return false;
         }
+
+        // SAF content:// 目录无法用 dart:io.File 做写入测试，能读即视为可用，
+        // 避免对 SAF 目录误报“无写入权限”。
+        if (path.toLowerCase().startsWith('content://')) {
+          return true;
+        }
         
         // 检查是否有写入权限
         if (dirPerms['canWrite'] != true) {

@@ -654,9 +654,8 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
           } else {
             // 这是一个文件
             String extension = p.extension(entry.name).toLowerCase();
-            if (extension == '.mp4' || extension == '.mkv') {
-              // 创建一个虚拟的 File 对象用于显示
-              // 使用 relativePath 构造一个本地路径用于显示
+            if (_batchMatchVideoExtensions.contains(extension)) {
+              // content URI 作为唯一标识保留在 path 中，显示名另行从 name 解码
               contents.add(io.File(entry.uri));
             }
           }
@@ -679,7 +678,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
               contents.add(entity);
             } else if (entity is io.File) {
               String extension = p.extension(entity.path).toLowerCase();
-              if (extension == '.mp4' || extension == '.mkv') {
+              if (_batchMatchVideoExtensions.contains(extension)) {
                 contents.add(entity);
               }
             }
@@ -960,11 +959,15 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
             builder: (context, snapshot) {
               // 获取扫描到的动画信息
               final historyItem = snapshot.data;
-              final String fileName = p.basename(entity.path);
+              // SAF content:// URI 不能用 p.basename（会得到编码后的文档 ID），
+              // 统一走 _basenameOrUrlLastSegment 取真实文件名。
+              final String fileName = _basenameOrUrlLastSegment(entity.path);
+              final String fileNameWithoutExt =
+                  p.basenameWithoutExtension(fileName);
 
               final subtitleText = _buildScanSubtitleText(
                 historyItem,
-                p.basenameWithoutExtension(entity.path),
+                fileNameWithoutExt,
               );
 
               return ListTile(
@@ -1032,7 +1035,7 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
                   final WatchHistoryItem itemToPlay = historyItem ??
                       WatchHistoryItem(
                         filePath: entity.path,
-                        animeName: p.basenameWithoutExtension(entity.path),
+                        animeName: fileNameWithoutExt,
                         episodeTitle: '',
                         duration: 0,
                         lastPosition: 0,
@@ -2206,6 +2209,15 @@ class _LibraryManagementTabState extends State<LibraryManagementTab> {
   /// URL 或本地路径取“文件名”：URL 取 pathSegments 最后一段，否则 p.basename。
   /// SMB 代理 URL（/smb/stream?path=...）真实文件名在查询参数里，需特殊处理。
   static String _basenameOrUrlLastSegment(String pathOrUrl) {
+    // Android SAF content:// URI：文档 ID 把真实路径整体 URL 编码进最后一段
+    // （例如 primary%3AMovies%2Fanimation%2F%5B...%5D.mkv），必须先整体解码，
+    // 再取最后一个 '/' 之后的部分，否则界面会显示成 primary%3A... 这种乱码。
+    if (AndroidSafService.isSafUri(pathOrUrl)) {
+      final decoded = Uri.decodeComponent(pathOrUrl);
+      final lastSlash = decoded.lastIndexOf('/');
+      final tail = lastSlash >= 0 ? decoded.substring(lastSlash + 1) : decoded;
+      return tail.isNotEmpty ? tail : pathOrUrl;
+    }
     if (pathOrUrl.contains('://')) {
       final uri = Uri.tryParse(pathOrUrl);
       if (uri != null) {
