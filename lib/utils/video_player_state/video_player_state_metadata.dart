@@ -1,5 +1,27 @@
 part of video_player_state;
 
+/// 从路径推导用于显示/兜底标题的文件名。
+///
+/// content:// (Android SAF) 的最后一段往往是 `primary%3A...%2F文件名` 这类
+/// 编码串，直接 [p.basename] 会得到 primary 开头的乱码，这里先 URL 解码再取
+/// 文件名部分，保证在没有刮削标题时也能回退到可读的文件名。
+String safeDisplayFileNameFromPath(String path, {bool withExtension = true}) {
+  String fileName;
+  if (path.startsWith('content://')) {
+    try {
+      final Uri uri = Uri.parse(path);
+      final String lastSegment =
+          uri.pathSegments.isNotEmpty ? uri.pathSegments.last : path;
+      fileName = p.basename(Uri.decodeComponent(lastSegment));
+    } catch (_) {
+      fileName = path.split('/').last;
+    }
+  } else {
+    fileName = p.basename(path);
+  }
+  return withExtension ? fileName : p.withoutExtension(fileName);
+}
+
 extension VideoPlayerStateMetadata on VideoPlayerState {
   // 添加setter方法以支持手动匹配后立即更新标题
   void setAnimeTitle(String? title) {
@@ -296,7 +318,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
     if (rawName.isNotEmpty) {
       return p.basenameWithoutExtension(rawName);
     }
-    return p.basenameWithoutExtension(videoPath);
+    return safeDisplayFileNameFromPath(videoPath, withExtension: false);
   }
 
   Future<bool> _tryManualMatchDanmaku(
@@ -389,7 +411,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
         debugPrint('[VideoPlayerState] 未找到现有观看记录，将创建基础记录后写入识别结果');
         existingHistory = WatchHistoryItem(
           filePath: path,
-          animeName: p.basenameWithoutExtension(path),
+          animeName: safeDisplayFileNameFromPath(path, withExtension: false),
           episodeTitle: null,
           watchProgress: 0,
           lastPosition: 0,
@@ -434,7 +456,7 @@ extension VideoPlayerStateMetadata on VideoPlayerState {
 
       // 如果仍然没有动画名称，从文件名提取
       if (resolvedAnimeName.isEmpty) {
-        final fileName = path.split('/').last;
+        final fileName = safeDisplayFileNameFromPath(path);
         String extractedName = fileName.replaceAll(
             RegExp(r'\.(mp4|mkv|avi|mov|flv|wmv)$', caseSensitive: false), '');
         extractedName = extractedName.replaceAll(RegExp(r'[_\.-]'), ' ').trim();

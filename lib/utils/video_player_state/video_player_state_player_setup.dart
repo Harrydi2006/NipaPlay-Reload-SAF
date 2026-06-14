@@ -179,7 +179,7 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
       debugPrint('VideoPlayerState: 文件不存在或无法访问: $videoPath');
       _setStatus(
         PlayerStatus.error,
-        message: '找不到文件或无法访问: ${p.basename(videoPath)}',
+        message: '找不到文件或无法访问: ${safeDisplayFileNameFromPath(videoPath)}',
       );
       _error = '文件不存在或无法访问';
       return;
@@ -255,7 +255,8 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
     _episodeTitle = historyItem?.episodeTitle; // 从历史记录获取集数标题
     _episodeId = historyItem?.episodeId; // 保存从历史记录传入的 episodeId
     _animeId = historyItem?.animeId; // 保存从历史记录传入的 animeId
-    String message = '正在初始化播放器: ${p.basename(videoPath)}';
+    String message =
+        '正在初始化播放器: ${safeDisplayFileNameFromPath(videoPath)}';
     if (_animeTitle != null) {
       message = '正在初始化播放器: $_animeTitle $_episodeTitle';
     }
@@ -974,6 +975,27 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
         String finalAnimeName = existingHistory.animeName;
         String? finalEpisodeTitle = existingHistory.episodeTitle;
 
+        // 自愈：content:// 且从未匹配到番剧(animeId 为空)的旧记录，其 animeName
+        // 可能是历史遗留的 primary%3A... 编码串，这里用解码后的文件名重算，
+        // 避免每次播放都把脏标题读回来显示。已匹配到番剧的记录(animeId 非空)
+        // 保留真实番剧名，不做改动。
+        if (path.startsWith('content://') && existingHistory.animeId == null) {
+          final sanitizedFromPath = safeDisplayFileNameFromPath(path)
+              .replaceAll(
+                RegExp(r'\.(mp4|mkv|avi|mov|flv|wmv)$', caseSensitive: false),
+                '',
+              )
+              .replaceAll(RegExp(r'[_\.-]'), ' ')
+              .trim();
+          if (sanitizedFromPath.isNotEmpty) {
+            finalAnimeName = sanitizedFromPath;
+            // 同步刷新当前显示的标题：line 254 已用(可能被污染的)历史名设过
+            // _animeTitle，这里改回解码文件名并通知 UI，使本次播放即显示正确。
+            _animeTitle = sanitizedFromPath;
+            _notifyListeners();
+          }
+        }
+
         final bool isJellyfinStream = path.startsWith('jellyfin://');
         final bool isEmbyStream = path.startsWith('emby://');
         final bool isSharedRemoteStream =
@@ -1104,7 +1126,10 @@ extension VideoPlayerStatePlayerSetup on VideoPlayerState {
         return;
       }
 
-      final fileName = path.split('/').last;
+      // content:// (Android SAF) 的最后一段是 primary%3A...%2F文件名 编码串，
+      // 直接 split('/') 会把整串当成文件名存进历史，导致未匹配视频的标题
+      // 回退成 primary 开头的乱码，这里统一用解码后的文件名。
+      final fileName = safeDisplayFileNameFromPath(path);
       final sanitizedFileName = fileName
           .replaceAll(
             RegExp(r'\.(mp4|mkv|avi|mov|flv|wmv)$', caseSensitive: false),

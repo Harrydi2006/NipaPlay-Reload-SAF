@@ -1263,6 +1263,14 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   List<String> get crtShaderPaths => List.unmodifiable(_crtShaderPaths);
   Duration get videoDuration => _videoDuration;
   String? get currentVideoPath => _currentVideoPath;
+
+  /// 当前视频用于显示的文件名（已对 content:// 等编码路径做解码）。
+  /// UI 顶部标题在没有刮削番剧名时回退显示此名称，避免出现 primary%3A... 乱码。
+  String? get currentVideoDisplayName {
+    final path = _currentVideoPath;
+    if (path == null || path.trim().isEmpty) return null;
+    return safeDisplayFileNameFromPath(path, withExtension: false);
+  }
   String? get currentActualPlayUrl => _currentActualPlayUrl; // 当前实际播放URL
   PlaybackSession? get currentPlaybackSession => _currentPlaybackSession;
   String get danmakuOverlayKey => _danmakuOverlayKey; // 弹幕覆盖层的稳定key

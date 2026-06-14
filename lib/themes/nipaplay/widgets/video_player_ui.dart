@@ -868,7 +868,7 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                       highPriorityAnimation: !videoState.isInFinalLoadingPhase,
                       animeTitle: videoState.animeTitle,
                       episodeTitle: videoState.episodeTitle,
-                      fileName: videoState.currentVideoPath?.split('/').last,
+                      fileName: videoState.currentVideoDisplayName,
                       animeId: videoState.animeId,
                     ),
                 ],
@@ -988,9 +988,8 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                                               !videoState.isInFinalLoadingPhase,
                                           animeTitle: videoState.animeTitle,
                                           episodeTitle: videoState.episodeTitle,
-                                          fileName: videoState.currentVideoPath
-                                              ?.split('/')
-                                              .last,
+                                          fileName:
+                                              videoState.currentVideoDisplayName,
                                           animeId: videoState.animeId,
                                         ),
                                       ),
@@ -1073,9 +1072,7 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                                             episodeTitle:
                                                 videoState.episodeTitle,
                                             fileName: videoState
-                                                .currentVideoPath
-                                                ?.split('/')
-                                                .last,
+                                                .currentVideoDisplayName,
                                             animeId: videoState.animeId,
                                           ),
                                         ),
