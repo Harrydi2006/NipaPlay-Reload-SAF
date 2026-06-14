@@ -1100,6 +1100,11 @@ class MainPageState extends State<MainPage>
   StreamSubscription<String>? _androidFileAssociationSubscription;
   DownloaderSettingsProvider? _downloaderSettingsProvider;
 
+  // 移动端「再按一次返回退出」：记录上次按下返回键的时间，避免在主界面
+  // （各个 Tab）误触一次返回就直接退回桌面。
+  DateTime? _lastBackPressedAt;
+  static const Duration _doubleBackExitWindow = Duration(seconds: 2);
+
   // 动态页面列表
   static const List<Widget> _basePages = [
     DashboardHomePage(),
@@ -1879,7 +1884,35 @@ class MainPageState extends State<MainPage>
       ),
     );
 
-    return content;
+    // 仅在 Android 主界面拦截系统返回键：第一次提示、2 秒内再按一次才退出，
+    // 防止在各个 Tab 误触一下就退回桌面。其它平台保持默认行为。
+    final bool enableDoubleBackToExit = !kIsWeb && Platform.isAndroid;
+    if (!enableDoubleBackToExit) {
+      return content;
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleDoubleBackToExit();
+      },
+      child: content,
+    );
+  }
+
+  // 处理 Android 主界面的「再按一次返回退出」逻辑。
+  void _handleDoubleBackToExit() {
+    final now = DateTime.now();
+    final last = _lastBackPressedAt;
+    if (last != null && now.difference(last) <= _doubleBackExitWindow) {
+      SystemNavigator.pop();
+      return;
+    }
+    _lastBackPressedAt = now;
+    if (mounted) {
+      BlurSnackBar.show(context, '再按一次返回键退出');
+    }
   }
 }
 
