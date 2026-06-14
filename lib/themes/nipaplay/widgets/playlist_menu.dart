@@ -18,6 +18,7 @@ import 'package:nipaplay/services/external_player_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/services/android_saf_service.dart';
 import 'package:nipaplay/providers/shared_remote_library_provider.dart';
 import 'package:nipaplay/utils/message_helper.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
@@ -132,6 +133,19 @@ class _PlaylistMenuState extends State<PlaylistMenu> {
           return;
         }
 
+        // Android SAF content:// 本地视频：io.File 无法列目录，改用 SAF 列出
+        // 同一文件夹下的兄弟视频，重建播放列表。
+        if (Platform.isAndroid && currentPath.startsWith('content://')) {
+          await _loadAndroidSafSiblings(currentPath);
+          if (!_hasFileSystemData) {
+            throw Exception('目录中没有找到视频文件');
+          }
+          setState(() {
+            _isLoading = false;
+          });
+          return;
+        }
+
         final currentFile = File(currentPath);
         final directory = currentFile.parent;
 
@@ -184,6 +198,70 @@ class _PlaylistMenuState extends State<PlaylistMenu> {
         _isLoading = false;
       });
     }
+  }
+
+  /// Android SAF：根据当前播放的 content:// 文档 URI，列出同一目录下的兄弟视频。
+  ///
+  /// SAF 子目录没有独立可复用的 tree URI，因此从文档 URI 还原出持久化授权所在的
+  /// tree URI，对其做一次递归扫描，再按“相对路径的父目录前缀”筛出同目录视频。
+  Future<void> _loadAndroidSafSiblings(String currentUri) async {
+    // content://.../tree/<treeId>/document/<docId> → tree URI 为 /document/ 之前的部分
+    final int docIdx = currentUri.indexOf('/document/');
+    if (docIdx <= 0) {
+      return;
+    }
+    final String treeUri = currentUri.substring(0, docIdx);
+
+    final List<AndroidSafFileEntry> entries =
+        await AndroidSafService.scanDirectory(treeUri);
+    if (entries.isEmpty) {
+      return;
+    }
+
+    // 取相对路径的父目录前缀（含结尾 '/'，根目录为空串）。
+    String parentOf(String relativePath) {
+      final int i = relativePath.lastIndexOf('/');
+      return i < 0 ? '' : relativePath.substring(0, i + 1);
+    }
+
+    // 定位当前文件，确定它所在的目录。
+    String? currentRelative;
+    for (final entry in entries) {
+      if (entry.uri == currentUri) {
+        currentRelative = entry.relativePath;
+        break;
+      }
+    }
+    final String currentParent =
+        currentRelative != null ? parentOf(currentRelative) : '';
+
+    const List<String> videoExtensions = [
+      '.mp4', '.mkv', '.avi', '.mov', '.wmv',
+      '.flv', '.webm', '.m4v', '.3gp', '.ts', '.m2ts',
+    ];
+    bool isVideo(String name) {
+      final String lower = name.toLowerCase();
+      return videoExtensions.any((ext) => lower.endsWith(ext));
+    }
+
+    final List<AndroidSafFileEntry> siblings = entries.where((entry) {
+      // 跳过目录项（SAF 目录项以 '/' 结尾且 size 为 0）。
+      if (entry.size == 0 && entry.relativePath.endsWith('/')) {
+        return false;
+      }
+      if (!isVideo(entry.name)) {
+        return false;
+      }
+      return parentOf(entry.relativePath) == currentParent;
+    }).toList();
+
+    siblings.sort(
+      (a, b) => WebDAVFileSorter.naturalCompare(a.name, b.name),
+    );
+
+    _fileSystemEpisodes = siblings.map((entry) => entry.uri).toList();
+    _hasFileSystemData = _fileSystemEpisodes.isNotEmpty;
+    debugPrint('[播放列表] SAF 同目录找到 ${_fileSystemEpisodes.length} 个视频文件');
   }
 
   bool _isSharedRemoteManagementStreamUrl(String path) {
@@ -870,6 +948,33 @@ class _PlaylistMenuState extends State<PlaylistMenu> {
               actualPlayUrl: filePath,
             );
             debugPrint('[播放列表] 远程流媒体播放完成');
+          } else if (filePath.startsWith('content://')) {
+            // Android SAF：content:// 不是真实文件系统路径，io.File 无法校验
+            // 存在性，直接交给底层播放器 / ContentResolver 处理。
+            // 先按路径查出扫描时存入的历史记录，拿到正确的刮削标题与
+            // animeId/episodeId，避免标题回退成 primary%3A... 的编码串。
+            final safHistory =
+                await WatchHistoryManager.getHistoryItem(filePath);
+            final playableItem = PlayableItem(
+              videoPath: filePath,
+              historyItem: safHistory,
+            );
+            if (!mounted) {
+              return;
+            }
+            if (await ExternalPlayerService.tryHandlePlayback(
+                context, playableItem)) {
+              if (mounted) {
+                widget.onClose();
+              }
+              return;
+            }
+
+            await videoState.initializePlayer(
+              filePath,
+              historyItem: safHistory,
+            );
+            debugPrint('[播放列表] SAF content:// 播放完成');
           } else {
             // 本地文件模式
             final file = File(filePath);

@@ -17,6 +17,8 @@ import 'package:nipaplay/services/external_player_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/services/android_saf_service.dart';
+import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/providers/shared_remote_library_provider.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
 import 'package:nipaplay/utils/shared_remote_history_helper.dart';
@@ -99,6 +101,9 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
       } else if (MediaSourceUtils.isWebDavPath(path)) {
         _dataSourceType = 'webdav';
         await _loadWebDavEpisodes(path);
+      } else if (Platform.isAndroid && path.startsWith('content://')) {
+        _dataSourceType = 'filesystem';
+        await _loadAndroidSafSiblings(path);
       } else {
         _dataSourceType = 'filesystem';
         await _loadFileSystemEpisodes(path);
@@ -250,6 +255,61 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
     }
 
     _episodes = files.map((file) => file.path).toList();
+  }
+
+  /// Android SAF：根据当前播放的 content:// 文档 URI，列出同一目录下的兄弟视频。
+  /// io.File 无法枚举 content:// 目录，因此从文档 URI 还原出 tree URI，递归扫描后
+  /// 按“相对路径的父目录前缀”筛出同目录视频。
+  Future<void> _loadAndroidSafSiblings(String currentUri) async {
+    final int docIdx = currentUri.indexOf('/document/');
+    if (docIdx <= 0) {
+      throw Exception('无法解析 SAF 视频路径');
+    }
+    final String treeUri = currentUri.substring(0, docIdx);
+
+    final List<AndroidSafFileEntry> entries =
+        await AndroidSafService.scanDirectory(treeUri);
+
+    String parentOf(String relativePath) {
+      final int i = relativePath.lastIndexOf('/');
+      return i < 0 ? '' : relativePath.substring(0, i + 1);
+    }
+
+    String? currentRelative;
+    for (final entry in entries) {
+      if (entry.uri == currentUri) {
+        currentRelative = entry.relativePath;
+        break;
+      }
+    }
+    final String currentParent =
+        currentRelative != null ? parentOf(currentRelative) : '';
+
+    const List<String> videoExts = [
+      '.mp4', '.mkv', '.avi', '.mov', '.wmv',
+      '.flv', '.webm', '.m4v', '.3gp', '.ts', '.m2ts',
+    ];
+    bool isVideo(String name) {
+      final String lower = name.toLowerCase();
+      return videoExts.any((ext) => lower.endsWith(ext));
+    }
+
+    final List<AndroidSafFileEntry> siblings = entries.where((entry) {
+      if (entry.size == 0 && entry.relativePath.endsWith('/')) {
+        return false;
+      }
+      if (!isVideo(entry.name)) {
+        return false;
+      }
+      return parentOf(entry.relativePath) == currentParent;
+    }).toList()
+      ..sort((a, b) => WebDAVFileSorter.naturalCompare(a.name, b.name));
+
+    if (siblings.isEmpty) {
+      throw Exception('当前目录没有其他视频文件');
+    }
+
+    _episodes = siblings.map((entry) => entry.uri).toList();
   }
 
   Future<void> _loadSharedRemoteManagementEpisodes(String path) async {
@@ -526,7 +586,8 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
       default:
         final uri = Uri.tryParse(path);
         if (uri != null && uri.pathSegments.isNotEmpty) {
-          return Uri.decodeComponent(uri.pathSegments.last);
+          // content:// 的最后一段解码后可能仍含路径分隔符，取文件名部分。
+          return p.basename(Uri.decodeComponent(uri.pathSegments.last));
         }
         return path.split('/').last;
     }
@@ -663,8 +724,16 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
         }
       }
 
+      // Android SAF：按路径查出扫描时存入的历史记录，拿到正确的刮削标题与
+      // animeId/episodeId，避免标题回退成 primary%3A... 的编码串。
+      WatchHistoryItem? safHistory;
+      if (path.startsWith('content://')) {
+        safHistory = await WatchHistoryManager.getHistoryItem(path);
+      }
+
       await widget.videoState.initializePlayer(
         path,
+        historyItem: safHistory,
         playbackSession: playbackSession,
       );
       if (!mounted) return;
