@@ -167,6 +167,75 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
     });
   }
 
+  // MPV 自定义配置的存储键（与 MediaKitPlayerAdapter.mpvCustomConfigPrefsKey 保持一致）
+  static const String _mpvCustomConfigKey = 'mpv_custom_config';
+
+  Future<void> _editMpvCustomConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getString(_mpvCustomConfigKey) ?? '';
+    if (!mounted) return;
+
+    final controller = TextEditingController(text: current);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final saved = await BlurDialog.show<bool>(
+      context: context,
+      title: 'MPV 自定义配置',
+      contentWidget: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '每行一条，格式为 key=value（可用 # 注释）。例如：\n'
+              'hwdec=auto-safe\nvideo-sync=display-resample\ncache=yes\n\n'
+              '提示：配置在播放器内核初始化时读取，保存后需【重启 App】才会生效；'
+              '部分需在初始化前设置的选项可能不生效。',
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurface.withOpacity(0.7),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 10,
+              minLines: 6,
+              style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+              decoration: InputDecoration(
+                hintText: '# 在此输入 mpv.conf 风格配置',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        HoverScaleTextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          text: '取消',
+        ),
+        HoverScaleTextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          text: '保存',
+        ),
+      ],
+    );
+
+    if (saved == true) {
+      await prefs.setString(_mpvCustomConfigKey, controller.text);
+      if (mounted) {
+        BlurSnackBar.show(context, '已保存 MPV 自定义配置，需重启 App 后生效');
+      }
+    }
+    controller.dispose();
+  }
+
   Future<void> _saveMacOSNativeVideoSetting(bool enabled) async {
     await PlayerFactory.saveMacOSNativeVideoEnabled(enabled);
     if (!mounted) return;
@@ -572,6 +641,16 @@ class _PlayerSettingsPageState extends State<PlayerSettingsPage> {
               _savePlayerKernelSettings(kernelType);
             },
             dropdownKey: _playerKernelDropdownKey,
+          ),
+          Divider(color: colorScheme.onSurface.withOpacity(0.12), height: 1),
+        ],
+        if (!kIsWeb && visibleKernelType == PlayerKernelType.mediaKit) ...[
+          SettingsItem.button(
+            title: 'MPV 自定义配置',
+            subtitle: '编辑 mpv.conf 风格的 key=value 选项（仅 Libmpv 内核生效，保存后需重启 App 生效）',
+            icon: Ionicons.construct_outline,
+            trailingIcon: Ionicons.chevron_forward_outline,
+            onTap: _editMpvCustomConfig,
           ),
           Divider(color: colorScheme.onSurface.withOpacity(0.12), height: 1),
         ],

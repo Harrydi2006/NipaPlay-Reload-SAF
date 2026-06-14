@@ -9,6 +9,7 @@ import 'package:nipaplay/utils/subtitle_file_utils.dart';
 import 'package:nipaplay/utils/platform_utils.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import './abstract_player.dart';
 import './player_enums.dart';
@@ -16,6 +17,9 @@ import './player_data_models.dart';
 
 /// MediaKit播放器适配器
 class MediaKitPlayerAdapter implements AbstractPlayer, TickerProvider {
+  /// 用户自定义 MPV 配置（mpv.conf 风格的 key=value 文本）的存储键。
+  /// 仅在使用 MediaKit(MPV) 内核时生效。
+  static const String mpvCustomConfigPrefsKey = 'mpv_custom_config';
   static bool _disableMpvLogs = false;
   static int? _cachedMacosMajor;
   static bool _macOSNativeVideoPreference = false;
@@ -260,6 +264,7 @@ class MediaKitPlayerAdapter implements AbstractPlayer, TickerProvider {
     _applyMacOSHdrOutputOptions();
     _applyMpvDiagnosticOptions();
     _applyAndroidAudioOutput();
+    unawaited(_applyUserMpvConfig());
     _bootstrapMacOSPlatformVideoSurface();
     if (!_prefersPlatformVideoSurface) {
       _controller = VideoController(
@@ -300,6 +305,62 @@ class MediaKitPlayerAdapter implements AbstractPlayer, TickerProvider {
     }
     _setMpvPropertyOption('ao', _androidAudioOutput!);
     debugPrint('MediaKit: Android 音频后端设置为 $_androidAudioOutput');
+  }
+
+  // 应用用户自定义的 MPV 配置。配置为 mpv.conf 风格的多行文本，每行 `key=value`，
+  // 支持 `#` 或 `;` 开头的注释行与空行。仅 MediaKit(MPV) 内核会创建本适配器，
+  // 因此这些配置天然只在选择 MPV 内核时生效。
+  // 注意：通过 setProperty 在运行时下发，部分需在初始化前设置的选项可能不生效。
+  Future<void> _applyUserMpvConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(mpvCustomConfigPrefsKey);
+      if (raw == null || raw.trim().isEmpty) {
+        return;
+      }
+      final entries = _parseMpvConfig(raw);
+      for (final entry in entries.entries) {
+        _setMpvPropertyOption(entry.key, entry.value, log: true);
+      }
+      if (entries.isNotEmpty) {
+        debugPrint('MediaKit: 已应用 ${entries.length} 条用户自定义 MPV 配置');
+      }
+    } catch (e) {
+      debugPrint('MediaKit: 应用用户自定义 MPV 配置失败: $e');
+    }
+  }
+
+  // 解析 mpv.conf 风格文本为 key=value 映射。忽略空行与注释行。
+  static Map<String, String> _parseMpvConfig(String raw) {
+    final result = <String, String>{};
+    for (final rawLine in raw.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#') || line.startsWith(';')) {
+        continue;
+      }
+      final separatorIndex = line.indexOf('=');
+      if (separatorIndex <= 0) {
+        // 没有 '=' 的行（如布尔开关 `key`）按 key=yes 处理，兼容 mpv.conf 习惯。
+        final key = line.replaceFirst(RegExp(r'^--'), '').trim();
+        if (key.isNotEmpty) {
+          result[key] = 'yes';
+        }
+        continue;
+      }
+      final key =
+          line.substring(0, separatorIndex).replaceFirst(RegExp(r'^--'), '').trim();
+      var value = line.substring(separatorIndex + 1).trim();
+      // 去除可能存在的成对引号
+      if (value.length >= 2 &&
+          ((value.startsWith('"') && value.endsWith('"')) ||
+              (value.startsWith("'") && value.endsWith("'")))) {
+        value = value.substring(1, value.length - 1);
+      }
+      if (key.isNotEmpty) {
+        result[key] = value;
+      }
+    }
+    return result;
   }
 
   void _applyMpvDiagnosticOptions() {
