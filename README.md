@@ -1,5 +1,8 @@
 # NipaPlay-Reload（Android SAF / 播放器增强分支）
 
+## 本仓库只是个人对于NipaPlay安卓版问题的一些修复和功能新增，后续不会跟进维护，也不保证对其他平台的兼容性，待官方分支完成了相关修复后本项目便会归档。
+## 项目完全使用vibe coding 构建，代码质量极低，主打能用就行。
+
 > 本仓库是 [AimesSoft/NipaPlay-Reload](https://github.com/AimesSoft/NipaPlay-Reload) 的一个 **fork 分支**。
 >
 > 由于改动较大且高度聚焦于 **Android 11+ 的本地文件访问（SAF）** 与 **播放器体验**，本分支 **不计划合并回上游主分支**，作为独立分支长期存在。
