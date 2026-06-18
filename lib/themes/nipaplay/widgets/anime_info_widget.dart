@@ -31,6 +31,20 @@ class _AnimeInfoWidgetState extends State<AnimeInfoWidget> {
   String? _resolveFileName(String? path) {
     final trimmed = path?.trim() ?? '';
     if (trimmed.isEmpty) return null;
+    // content:// (Android SAF) 路径直接 basename 会得到 primary%3A... 编码串，
+    // 改用解码后的文件名作为顶部标题的回退显示。
+    if (trimmed.startsWith('content://')) {
+      try {
+        final Uri uri = Uri.parse(trimmed);
+        final String lastSegment =
+            uri.pathSegments.isNotEmpty ? uri.pathSegments.last : trimmed;
+        return _resolveTitle(
+          p.basenameWithoutExtension(Uri.decodeComponent(lastSegment)),
+        );
+      } catch (_) {
+        // 解析失败时退回原始逻辑。
+      }
+    }
     return _resolveTitle(p.basenameWithoutExtension(trimmed));
   }
 

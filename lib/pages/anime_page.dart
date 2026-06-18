@@ -125,12 +125,16 @@ class _AnimePageState extends State<AnimePage>
         item.filePath.startsWith('https://');
     final isJellyfinProtocol = item.filePath.startsWith('jellyfin://');
     final isEmbyProtocol = item.filePath.startsWith('emby://');
+    // Android SAF content:// URI 不能用 dart:io.File 判断存在性，交给底层播放器
+    final isSafUri = item.filePath.startsWith('content://');
 
     bool fileExists = false;
     String filePath = item.filePath;
     PlaybackSession? playbackSession;
 
-    if (isNetworkUrl || isJellyfinProtocol || isEmbyProtocol) {
+    if (isSafUri) {
+      fileExists = true;
+    } else if (isNetworkUrl || isJellyfinProtocol || isEmbyProtocol) {
       fileExists = true;
       if (isJellyfinProtocol) {
         try {

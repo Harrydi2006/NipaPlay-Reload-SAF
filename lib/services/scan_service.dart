@@ -786,8 +786,23 @@ class ScanService with ChangeNotifier {
       return;
     }
 
-    List<String> filesToProcess = List<String>.from(diff.filesToProcess)
-      ..sort();
+    // 自愈：把“文件夹里存在但观看历史库里缺失”的文件也加入处理列表，即使其 hash 未变。
+    // 这样可修复历史误删（例如 content:// 记录被旧逻辑删掉、但文件 hash 缓存仍在）导致
+    // 的“扫描判定无变化、番剧补不回来”问题，确保扫描后所有可匹配的番剧都会显示。
+    final Set<String> existingHistoryPaths =
+        (await WatchHistoryManager.getAllHistory())
+            .map((item) => item.filePath)
+            .toSet();
+    final List<String> missingFromHistory =
+        diff.currentFiles.where((relativePath) {
+      final resolvedPath = diff.filePathsByRelativePath?[relativePath] ??
+          p.join(directoryPath, relativePath);
+      return !existingHistoryPaths.contains(resolvedPath);
+    }).toList();
+
+    List<String> filesToProcess =
+        (<String>{...diff.filesToProcess, ...missingFromHistory}.toList())
+          ..sort();
     if (filesToProcess.isEmpty) {
       if (diff.deletedFiles.isNotEmpty) {
         final deletionMessage =

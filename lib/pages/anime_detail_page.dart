@@ -45,6 +45,7 @@ import 'package:nipaplay/utils/app_accent_color.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/bangumi_comments_widget.dart';
 import 'package:nipaplay/pages/tab_labels.dart';
 import 'package:nipaplay/themes/nipaplay/widgets/nipaplay_main_tab_bar.dart';
+import 'package:path/path.dart' as p;
 
 enum _EpisodeCleanupAction {
   clearScanResults,
@@ -135,7 +136,8 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
   PlayableItem Function(SharedRemoteEpisode episode)? _sharedEpisodeBuilder;
   final Map<int, SharedRemoteEpisode> _sharedEpisodeMap = {};
   final Map<int, PlayableItem> _sharedPlayableMap = {};
-  final Map<int, Future<WatchHistoryItem?>> _episodeHistoryFutures = {};
+  // 每集对应的全部本地文件版本（同集可能匹配到多个文件，如 PV 被误刮削成某集）。
+  final Map<int, Future<List<WatchHistoryItem>>> _episodeHistoryFutures = {};
   bool _isLoadingSharedEpisodes = false;
   String? _sharedEpisodesError;
   bool _isLoading = true;
@@ -746,6 +748,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
           lowerPath.startsWith('https://') ||
           lowerPath.startsWith('jellyfin://') ||
           lowerPath.startsWith('emby://') ||
+          lowerPath.startsWith('content://') || // Android SAF：非真实文件路径，交给底层播放器
           MediaSourceUtils.isWebDavPath(filePath) ||
           MediaSourceUtils.isSmbPath(filePath);
 
@@ -788,6 +791,108 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
     if (mounted) {
       BlurSnackBar.show(context, '媒体库中找不到此剧集的视频文件');
     }
+  }
+
+  /// 从文件路径推导用于展示的文件名。content:// (Android SAF) 路径需解码 docId。
+  String _versionDisplayFileName(String filePath) {
+    if (filePath.toLowerCase().startsWith('content://')) {
+      const String marker = '/document/';
+      final int idx = filePath.indexOf(marker);
+      String docId =
+          idx < 0 ? filePath : filePath.substring(idx + marker.length);
+      final int queryIdx = docId.indexOf('?');
+      if (queryIdx >= 0) docId = docId.substring(0, queryIdx);
+      try {
+        docId = Uri.decodeComponent(docId);
+      } catch (_) {
+        // 解码失败时按原串处理。
+      }
+      final int slashIdx = docId.lastIndexOf('/');
+      return slashIdx < 0 ? docId : docId.substring(slashIdx + 1);
+    }
+    return p.basename(filePath);
+  }
+
+  /// 同一集匹配到多个本地文件时，弹出二级菜单让用户选择要播放的版本。
+  Future<void> _showEpisodeVersionPicker({
+    required BangumiAnime anime,
+    required EpisodeData episode,
+    required List<WatchHistoryItem> versions,
+  }) async {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color textColor = isDark ? Colors.white : Colors.black87;
+    final Color secondaryTextColor = isDark ? Colors.white70 : Colors.black54;
+    final Color accentColor = AppAccentColors.current;
+
+    final selected = await BlurDialog.show<WatchHistoryItem>(
+      context: context,
+      title: '选择版本 · ${episode.title}',
+      contentWidget: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.5,
+          maxWidth: 520,
+        ),
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: versions.length,
+          separatorBuilder: (_, __) =>
+              Divider(height: 1, color: secondaryTextColor.withOpacity(0.15)),
+          itemBuilder: (context, index) {
+            final item = versions[index];
+            final String fileName = _versionDisplayFileName(item.filePath);
+            final double progress = item.watchProgress;
+            final String progressLabel = progress > 0.95
+                ? '已看完'
+                : progress > 0.01
+                    ? '已观看 ${(progress * 100).toStringAsFixed(0)}%'
+                    : '未观看';
+            return ListTile(
+              dense: true,
+              leading: Icon(
+                progress > 0.95
+                    ? Ionicons.checkmark_circle
+                    : Ionicons.film_outline,
+                size: 18,
+                color: progress > 0.95
+                    ? accentColor
+                    : secondaryTextColor.withOpacity(0.7),
+              ),
+              title: Text(
+                fileName,
+                locale: const Locale('zh-Hans', 'zh'),
+                style: TextStyle(color: textColor, fontSize: 13),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                progressLabel,
+                locale: const Locale('zh-Hans', 'zh'),
+                style:
+                    TextStyle(color: secondaryTextColor, fontSize: 11),
+              ),
+              onTap: () => Navigator.of(context).pop(item),
+            );
+          },
+        ),
+      ),
+      actions: [
+        HoverScaleTextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('取消', style: TextStyle(color: secondaryTextColor)),
+        ),
+      ],
+    );
+
+    if (selected == null || !mounted) return;
+
+    await _playEpisodeFromHistoryOrShared(
+      anime: anime,
+      episode: episode,
+      historyItem: selected,
+      historyState: ConnectionState.done,
+      sharedPlayableAvailable: false,
+      sharedPlayable: null,
+    );
   }
 
   int _getTotalEpisodeCount(BangumiAnime anime) {
@@ -1919,13 +2024,19 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                     sharedEpisode.fileExists;
                 final historyFuture = _episodeHistoryFutures.putIfAbsent(
                   episode.id,
-                  () => WatchHistoryManager.getHistoryItemByEpisode(
+                  () => WatchHistoryManager.getHistoriesByEpisode(
                       anime.id, episode.id),
                 );
 
-                return FutureBuilder<WatchHistoryItem?>(
+                return FutureBuilder<List<WatchHistoryItem>>(
                   future: historyFuture,
                   builder: (context, historySnapshot) {
+                    // 该集匹配到的全部本地文件版本；首项为最近观看的版本，作为默认播放目标。
+                    final List<WatchHistoryItem> episodeVersions =
+                        historySnapshot.connectionState == ConnectionState.done
+                            ? (historySnapshot.data ?? const <WatchHistoryItem>[])
+                            : const <WatchHistoryItem>[];
+                    final bool hasMultipleVersions = episodeVersions.length > 1;
                     final bool enableEpisodeHover = !globals.isTouch;
                     final bool isEpisodeHovered = enableEpisodeHover &&
                         _hoveredEpisodeTileId == episode.id;
@@ -1940,9 +2051,7 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                     bool progressFromHistory = false;
                     bool isFromScan = false;
                     final historyItem =
-                        historySnapshot.connectionState == ConnectionState.done
-                            ? historySnapshot.data
-                            : null;
+                        episodeVersions.isNotEmpty ? episodeVersions.first : null;
 
                     if (historyItem != null) {
                       final historyProgress = historyItem.watchProgress;
@@ -2076,6 +2185,17 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (hasMultipleVersions)
+                                _EpisodeVersionsButton(
+                                  count: episodeVersions.length,
+                                  accentColor: accentColor,
+                                  secondaryTextColor: secondaryTextColor,
+                                  onTap: () => _showEpisodeVersionPicker(
+                                    anime: anime,
+                                    episode: episode,
+                                    versions: episodeVersions,
+                                  ),
+                                ),
                               if (progressText != null)
                                 Text(
                                   progressText,
@@ -2142,6 +2262,14 @@ class _AnimeDetailPageState extends State<AnimeDetailPage>
                                         sharedPlayableAvailable,
                                     sharedPlayable: sharedPlayable,
                                   ),
+                          // 同集多文件时，长按可打开版本选择（覆盖被 PV 等挤掉的正片）。
+                          onLongPress: hasMultipleVersions
+                              ? () => _showEpisodeVersionPicker(
+                                    anime: anime,
+                                    episode: episode,
+                                    versions: episodeVersions,
+                                  )
+                              : null,
                         ),
                       ),
                     );
@@ -2777,6 +2905,60 @@ class _HoverableTagState extends State<_HoverableTag> {
       onActivate: widget.onTap,
       borderRadius: BorderRadius.circular(20),
       child: tappable,
+    );
+  }
+}
+
+/// 同集多文件时显示在剧集行尾的"版本数"按钮，点击打开版本选择菜单。
+class _EpisodeVersionsButton extends StatelessWidget {
+  final int count;
+  final Color accentColor;
+  final Color secondaryTextColor;
+  final VoidCallback onTap;
+
+  const _EpisodeVersionsButton({
+    required this.count,
+    required this.accentColor,
+    required this.secondaryTextColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(4),
+          onTap: onTap,
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              border: Border.all(color: accentColor.withOpacity(0.6), width: 1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Ionicons.albums_outline,
+                    size: 12, color: accentColor.withOpacity(0.9)),
+                const SizedBox(width: 3),
+                Text(
+                  '$count 版本',
+                  locale: const Locale('zh-Hans', 'zh'),
+                  style: TextStyle(
+                    color: accentColor.withOpacity(0.9),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -267,11 +267,13 @@ class _NipaplayLargeScreenAnimeDetailPageState
     }
 
     final futures = episodes.map((episode) async {
-      final history = await WatchHistoryManager.getHistoryItemByEpisode(
+      // 同集可能匹配到多个文件，取最近观看的版本作为默认（而非数据库任意一条）。
+      final histories = await WatchHistoryManager.getHistoriesByEpisode(
         anime.id,
         episode.id,
       );
-      return MapEntry<int, WatchHistoryItem?>(episode.id, history);
+      return MapEntry<int, WatchHistoryItem?>(
+          episode.id, histories.isNotEmpty ? histories.first : null);
     }).toList(growable: false);
 
     final result = await Future.wait(futures);

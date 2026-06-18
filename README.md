@@ -1,223 +1,65 @@
-<div align="center">
-  <div style="display: flex; align-items: center; justify-content: center;">
-    <img src="https://github.com/user-attachments/assets/5366a99f-8906-4198-b2cf-2553252c0fb4" width="100px" style="margin-right: 20px;" alt="Logo">
-    <img src="icons/new-icon-win.png" width="100px" alt="Icon">
-  </div>
+# NipaPlay-Reload（Android SAF / 播放器增强分支）
 
-# NipaPlay-Reload
-
-<img src="https://count.getloli.com/get/@nipaplay?theme=moebooru" alt="访问统计" />
-
-<br>
-
-![GitHub release](https://img.shields.io/github/v/release/aimessoft/nipaplay-reload?style=flat-square&color=blue)
-![GitHub downloads](https://img.shields.io/github/downloads/aimessoft/nipaplay-reload/total?style=flat-square&color=green)
-![Platform support](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-lightgrey?style=flat-square)
-![License](https://img.shields.io/github/license/aimessoft/nipaplay-reload?style=flat-square)
-
-<br>
-
-<img src="https://api.star-history.com/svg?repos=aimessoft/nipaplay-reload&type=Date&theme=moebooru" alt="Star History Chart" width="80%">
-</div>
-
-<div align="center">
-  <h3>
-    一个现代化的跨平台视频播放器应用
-  </h3>
-  <p>
-    支持 Windows、macOS、Linux、Android 和 iOS 五大操作系统。
-    <br>
-    打造您的个人媒体中心，享受极致的追番体验。
-  </p>
-</div>
+> 本仓库是 [AimesSoft/NipaPlay-Reload](https://github.com/AimesSoft/NipaPlay-Reload) 的一个 **fork 分支**。
+>
+> 由于改动较大且高度聚焦于 **Android 11+ 的本地文件访问（SAF）** 与 **播放器体验**，本分支 **不计划合并回上游主分支**，作为独立分支长期存在。
+>
+> 本 README 只描述 **本分支相对上游主分支的差异**。项目本身的完整介绍、构建方式、其它平台说明请参阅上游仓库。
 
 ---
 
-## 核心亮点
+## 为什么有这个分支
 
-NipaPlay 不仅仅是一个播放器，更是您的二次元媒体管家：
-
-* **全平台支持**：无论是在电脑还是手机上，体验始终如一。
-* **强大的弹幕系统**：自动匹配网络弹幕，支持弹弹play，让看番不再孤单。
-* **媒体库集成**：支持 Emby、Jellyfin、SMB、WebDAV，轻松挂载远程资源。
-* **番剧管理**：同步 Bangumi 观看进度，查看新番时间表，打分评论一站式搞定。
-* **现代 UI**：毛玻璃风格设计，支持自动黑夜模式，美观与易用并重。
-
-## 应用截图
-
-<details>
-<summary><b>点击展开查看更多截图</b></summary>
-
-<div align="center">
-  <table style="border: none;">
-    <tr>
-      <td align="center" style="border: none;">
-        <img src="others/主页.png" width="100%" alt="主界面">
-        <br><b>主界面</b>
-      </td>
-      <td align="center" style="border: none;">
-        <img src="others/播放界面.png" width="100%" alt="播放界面">
-        <br><b>播放界面</b>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" style="border: none;">
-        <img src="others/新番详情界面.png" width="100%" alt="番剧详情">
-        <br><b>番剧详情界面</b>
-      </td>
-      <td align="center" style="border: none;">
-        <img src="others/流媒体详情页面.png" width="100%" alt="流媒体详情">
-        <br><b>流媒体详情页面</b>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" style="border: none;">
-        <img src="others/媒体库界面.png" width="100%" alt="媒体库">
-        <br><b>媒体库界面</b>
-      </td>
-      <td align="center" style="border: none;">
-        <img src="others/库管理界面.png" width="100%" alt="库管理">
-        <br><b>库管理界面</b>
-      </td>
-    </tr>
-  </table>
-  <img src="others/播放界面-UI展示.png" width="80%" alt="UI展示">
-  <br><b>播放界面 UI 展示</b>
-</div>
-
-</details>
-
-## 下载安装
-
-支持 **Windows (x64)**、**Linux (amd64/arm64)**、**macOS (Intel/Apple Silicon)**、**Android** 和 **iOS**。
-
-### 快速下载
-
-- **GitHub Releases (推荐)**: [下载最新版本](https://github.com/AimesSoft/nipaplay-reload/releases)
-
-- **iOS (App Store)**:
-
-  <a href="https://apps.apple.com/cn/app/nipaplay/id6751284970" target="_blank" rel="noopener noreferrer">
-  <img src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/zh-cn?size=250x83&releaseDate=1738800000" width="200" alt="Download on the App Store"/>
-  </a>
-
-- **Windows (Microsoft Store)**:
-
-  <a href="https://apps.microsoft.com/detail/9nmr8clq0gcr?referrer=appbadge&mode=full" target="_blank"  rel="noopener noreferrer">
-  <img src="https://get.microsoft.com/images/zh-cn%20dark.svg" width="200"/>
-  </a>
-
-### 包管理器安装
-
-#### macOS (Homebrew)
-
-```bash
-brew tap AimesSoft/nipaplay-reload
-brew install --cask nipaplay-reload
-```
-
-#### Arch Linux (AUR)
-
-```bash
-paru -S nipaplay-reload-bin
-# 或
-yay -S nipaplay-reload-bin
-```
-
-#### Gentoo Linux
-
-```bash
-ebuild gentoo/media-video/nipaplay-bin/nipaplay-bin-1.8.11.ebuild merge
-```
-
-## 功能列表
-
-### 播放体验
-
-* **内核支持**：基于 fvp (libmdk) / media_kit / video_player / libmpv，性能强劲。
-* **视频支持**：本地播放、Emby/Jellyfin/SMB 流媒体、WebDAV 挂载。
-* **画质增强**：支持 Anime4K 超分、CRT 着色器效果。
-* **音频控制**：多音轨切换、倍速播放。
-* **种子下载器**：支持种子文件下载，轻松获取网络资源。
-
-* **AI 防剧透**：智能识别并遮挡可能造成剧透的内容，追番更安心。
-
-### 弹幕与字幕
-
-* **弹幕**：滚动/顶底弹幕、轨迹记忆、防遮挡、本地挂载 (xml/json)。
-* **字幕**：ASS/SRT 格式、多轨切换、样式自定义、本地挂载。
-
-### 番剧与同步
-
-* **Bangumi**：进度同步、评分、评论。
-* **新番表**：每日更新提醒，按周分类。
-* **数据备份**：历史记录同步、多设备远程访问。
-
-### 个性化
-
-* **主题**：亮色/暗色切换、自定义背景图。
-* **操作**：自定义快捷键、适配平板/电视布局。
-
-### 技术架构
-
-* **JS 插件系统**：支持通过 JavaScript 编写插件，灵活扩展播放器功能。
-* **Rust+Dart 混合架构**：核心模块采用 Rust 实现高性能计算，与 Dart 层无缝协作。
-
-## 文档与支持
-
-* **[完整使用文档](Documentation/index.md)**：安装配置、Emby 连接教程、故障排查。
-* **[贡献者指南](CONTRIBUTING_GUIDE/00-Introduction.md)**：如何参与开发、添加新功能。
-* **反馈问题**：请在软件内的“开发者选项”中导出日志，或在 GitHub Issues 中提交。
-
-## 技术栈
-
-本项目基于 **Flutter** 构建，使用了以下核心技术：
-
-| 类别 | 技术/库 |
-| :--- | :--- |
-| **核心框架** | Flutter, Dart |
-| **播放引擎** | FVP, Media Kit, libmpv |
-| **UI/UX** | Material Design, Glassmorphism, Hugeicons |
-| **状态管理** | Provider |
-| **数据存储** | SQLite, SharedPreferences |
-| **网络 API** | Dio/Http, Bangumi API, 弹弹play API |
-| **插件系统** | JS 插件 (JavaScript Runtime) |
-| **原生模块** | Rust (FFI), Dart FFI |
-
-## 开发计划 (Roadmap)
-
-- [x] 评论区功能完善
-- [ ] 云媒体库挂载 (FTP)
-- [ ] 视频片段导出 (GIF)
-- [x] 内置下载器及远程控制
-- [x] 在线 URL 播放优化
-- [ ] Webview 弹幕刮削
-- [ ] 补帧功能 (SVP/Other)
-- [ ] HDR 和杜比视界支持
-- [ ] 鸿蒙 OS / Vision Pro / Apple TV 移植
-
-## 赞助与鸣谢
-
-如果这个项目对您有帮助，欢迎赞助以支持服务器运行和后续开发！
-
-<div style="display: flex; gap: 20px;">
-  <a href="https://afdian.com/a/irigas" target="_blank">
-    <img src="others/爱发电.jpg" height="150px" alt="爱发电">
-  </a>
-  <img src="others/赞赏码.jpg" height="150px" alt="微信赞赏">
-</div>
-
-### 鸣谢
-
-感谢以下贡献者和支持者：
-EmoSakura, Mr.果仁, 姬田诗乃, 微光, 大祥老师, 卡拜, JMT, 无之将, 博易伯伯, 千葉あおい, Kean
-
-### 看板娘 
-
-[Pixiv Artwork](https://www.pixiv.net/artworks/130349456) (作者 MCDFsteve)
+上游版本在 Android 11+（作用域存储 / Scoped Storage）下，本地媒体库存在一系列问题：扫描卡死、文件名乱码、权限误报、SAF 视频无法播放、播放列表/字幕无法识别等。本分支针对这些问题做了系统性修复，并顺带增强了播放器的若干体验。
 
 ---
 
-<div align="center">
-  <sub>Made with ❤️ by the NipaPlay Team</sub>
-</div>
+## 主要差异一览
+
+### 1. Android 11+ 本地媒体库（SAF）修复
+- 通过 `ACTION_OPEN_DOCUMENT_TREE` 取得的 `content://` 目录可以正常 **扫描 / 入库 / 播放**。
+- 修复扫描 **卡死 / 假死**。
+- 修复媒体库中 **文件名乱码**（不再显示 `primary%3A…` 这类编码串，统一解码为真实文件名）。
+- 修复 **权限误报**（content:// 路径不再走 `File().existsSync()` 误判为“文件不存在”）。
+- 扩充 **视频格式** 识别范围。
+- 修复入库后 **媒体库持久化** 问题（重启后仍在）。
+
+涉及：`MainActivity.kt`、`android_saf_service.dart`、`scan_service.dart`、`concurrent_video_processor.dart`、`library_management_tab.dart`、`file_picker_service.dart`、`watch_history_*`、`dandanplay_service_io.dart` 等。
+
+### 2. 播放列表支持 SAF（content://）
+- 从 SAF 目录播放时，正确列出 **同目录的其它视频** 并可切换播放。
+- 修复混入非视频文件的目录导致 **播放列表为空 / 条目空白** 的问题（根因是 `content://` 文件名被二次解码抛异常，已改为安全的单次解码）。
+
+涉及：`playlist_menu.dart`、`cupertino_playlist_pane.dart`。
+
+### 3. 播放器标题显示修复
+- 播放器顶部标题 **始终回退到可读文件名**，不再显示 `primary%3A…` 编码串。
+- 对历史记录中已被污染的标题做 **自愈式修正**。
+
+涉及：`video_player_state_metadata.dart`、`video_player_state_player_setup.dart`、`video_player_ui.dart`。
+
+### 4. 字幕：SAF 自动识别 + 多轨 + 子目录扫描
+- 恢复并增强 SAF 视频的 **字幕自动识别**（新增原生 `scanSubtitleDirectory`）。
+- 支持 **多个匹配字幕** 同时加载并在字幕轨道中切换（例如同时存在 SC / TC）。
+- 扫描字幕时一并扫描 **`sub` / `subs` / `subtitle` / `字幕`** 等关键词子目录。
+- 修复 Android 上 **手动选择字幕** 无法显示目标格式文件的问题。
+
+涉及：`subtitle_manager.dart`、`android_saf_service.dart`、`MainActivity.kt`。
+
+### 5. 媒体库：同一集多版本选择
+- 当同一 `(animeId + 集数)` 匹配到 **多个本地文件**（例如 PV 被误刮削成某一集）时，媒体库中显示 **版本数量**，可在 **二级菜单** 中选择具体文件播放，避免正确文件被挤掉。
+
+涉及：`watch_history_database.dart`、`watch_history_model.dart`、`anime_detail_page.dart`、`large_screen_anime_detail_page.dart`。
+
+### 6. 播放器体验增强
+- **MPV（media_kit）内核支持自定义配置**（自定义 `mpv.conf`）。
+- **弹幕垂直偏移** 设置。
+- Android **双击返回键退出**。
+
+涉及：`media_kit_player_adapter.dart`、`player_settings_page.dart`、`danmaku_settings_menu.dart`、`cupertino_danmaku_settings_pane.dart`、`main.dart` 等。
+
+---
+
+## 说明
+- 以上修改主要面向 **Android**；iOS（Cupertino）主题中的对应改动仅作兼容性保留，未做重点验证。
+- 完整文件级改动请见提交记录与 `Documentation/` 下的补充说明。

@@ -449,8 +449,8 @@ class _TagSearchModalState extends State<TagSearchModal> {
     debugPrint('[TagSearchWidget] _handlePlayEpisode: 开始处理播放请求');
     debugPrint('[TagSearchWidget] 文件路径: ${historyItem.filePath}');
 
-    // 检查文件是否存在
-    if (!kIsWeb) {
+    // 检查文件是否存在（Android SAF content:// URI 交给底层播放器，不做 File 检查）
+    if (!kIsWeb && !historyItem.filePath.startsWith('content://')) {
       final videoFile = File(historyItem.filePath);
       if (!videoFile.existsSync()) {
         debugPrint('[TagSearchWidget] 文件不存在: ${historyItem.filePath}');

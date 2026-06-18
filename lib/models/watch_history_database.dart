@@ -485,6 +485,35 @@ class WatchHistoryDatabase {
       return null;
     }
   }
+
+  // 根据番剧ID和集数ID获取该集对应的所有本地文件记录（同一集可能匹配到多个文件，
+  // 例如 PV 被错误刮削成某一集）。按最近观看时间倒序，便于把最近用过的版本放在前面。
+  Future<List<WatchHistoryItem>> getHistoriesByEpisode(
+      int animeId, int episodeId) async {
+    if (kIsWeb) {
+      await _ensureWebStoreLoaded();
+      final items = _webStore.values
+          .where((item) => item.animeId == animeId && item.episodeId == episodeId)
+          .toList();
+      items.sort((a, b) => b.lastWatchTime.compareTo(a.lastWatchTime));
+      return items;
+    }
+    final db = await database;
+
+    try {
+      final List<Map<String, dynamic>> maps = await db.query(
+        'watch_history',
+        where: 'anime_id = ? AND episode_id = ?',
+        whereArgs: [animeId, episodeId],
+        orderBy: 'last_watch_time DESC',
+      );
+
+      return maps.map((map) => _mapToWatchHistoryItem(map)).toList();
+    } catch (e) {
+      debugPrint('按剧集ID获取多文件观看历史失败: $e');
+      return [];
+    }
+  }
   
   // 根据动画ID获取该动画的所有剧集历史记录，按集数排序
   Future<List<WatchHistoryItem>> getHistoryByAnimeId(int animeId) async {

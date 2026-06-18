@@ -397,6 +397,9 @@ class _WatchHistoryPageState extends State<WatchHistoryPage> {
     } else {
       if (kIsWeb) {
         fileExists = true;
+      } else if (currentItem.filePath.startsWith('content://')) {
+        // Android SAF content:// URI 不能用 dart:io.File 判断，交给底层播放器
+        fileExists = true;
       } else {
         final videoFile = File(currentItem.filePath);
         fileExists = videoFile.existsSync();

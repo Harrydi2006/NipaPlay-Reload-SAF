@@ -37,6 +37,10 @@ class MainActivity: FlutterActivity() {
         private val SUPPORTED_VIDEO_EXTENSIONS = setOf(
             "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ts", "m2ts"
         )
+        // 外挂字幕扩展名（与 Dart 端字幕自动识别保持一致）。
+        private val SUPPORTED_SUBTITLE_EXTENSIONS = setOf(
+            "srt", "ass", "ssa", "sub", "vtt", "idx", "sup", "smi"
+        )
     }
 
     private val STORAGE_CHANNEL = "custom_storage_channel"
@@ -245,6 +249,23 @@ class MainActivity: FlutterActivity() {
                             }
                         }.start()
                     }
+                    "scanSubtitleDirectory" -> {
+                        val treeUri = call.argument<String>("treeUri")
+                        if (treeUri.isNullOrBlank()) {
+                            result.error("INVALID_ARGUMENT", "treeUri is required", null)
+                            return@setMethodCallHandler
+                        }
+
+                        Thread {
+                            try {
+                                val entries = scanSafSubtitleFiles(treeUri)
+                                runOnUiThread { result.success(entries) }
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error scanning SAF subtitles", e)
+                                runOnUiThread { result.error("SAF_SCAN_ERROR", e.message, null) }
+                            }
+                        }.start()
+                    }
                     "getFileMetadata" -> {
                         val uri = call.argument<String>("uri")
                         if (uri.isNullOrBlank()) {
@@ -275,6 +296,25 @@ class MainActivity: FlutterActivity() {
                             Log.e("MainActivity", "Error checking SAF tree access", e)
                             result.success(false)
                         }
+                    }
+                    "copyToCache" -> {
+                        // 把 content:// 文件复制到应用缓存目录并返回真实路径。
+                        // 主要用于外挂字幕：字幕加载流程依赖真实文件路径，无法直接读 content://。
+                        val uri = call.argument<String>("uri")
+                        if (uri.isNullOrBlank()) {
+                            result.error("INVALID_ARGUMENT", "uri is required", null)
+                            return@setMethodCallHandler
+                        }
+
+                        Thread {
+                            try {
+                                val path = saveContentToCache(this, Uri.parse(uri))
+                                runOnUiThread { result.success(path) }
+                            } catch (e: Exception) {
+                                Log.e("MainActivity", "Error copying SAF uri to cache", e)
+                                runOnUiThread { result.error("SAF_COPY_ERROR", e.message, null) }
+                            }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }
@@ -617,6 +657,62 @@ class MainActivity: FlutterActivity() {
     private fun isSupportedVideoFileName(name: String): Boolean {
         val extension = name.substringAfterLast('.', "").lowercase()
         return extension in SUPPORTED_VIDEO_EXTENSIONS
+    }
+
+    // 扫描 SAF 目录树下的字幕文件（结构与视频扫描一致，便于 Dart 端按目录匹配）。
+    private fun scanSafSubtitleFiles(treeUriString: String): List<Map<String, Any>> {
+        val treeUri = Uri.parse(treeUriString)
+        val root = DocumentFile.fromTreeUri(this, treeUri)
+            ?: throw IllegalArgumentException("Cannot open SAF tree URI: $treeUriString")
+        if (!root.exists() || !root.isDirectory || !root.canRead()) {
+            throw IllegalStateException("SAF tree is not readable: $treeUriString")
+        }
+
+        val output = mutableListOf<Map<String, Any>>()
+        collectSafSubtitleFiles(root, "", output)
+        return output.sortedBy { it["relativePath"] as String }
+    }
+
+    private fun collectSafSubtitleFiles(
+        current: DocumentFile,
+        relativePrefix: String,
+        output: MutableList<Map<String, Any>>
+    ) {
+        for (entry in current.listFiles()) {
+            val name = entry.name ?: continue
+            val relativePath = if (relativePrefix.isEmpty()) {
+                name
+            } else {
+                "$relativePrefix$name"
+            }
+
+            if (entry.isDirectory) {
+                collectSafSubtitleFiles(entry, "$relativePath/", output)
+                continue
+            }
+
+            if (!entry.isFile || !isSupportedSubtitleFileName(name)) {
+                continue
+            }
+
+            val size = entry.length().coerceAtLeast(0L)
+            val modifiedMillis = entry.lastModified().coerceAtLeast(0L)
+
+            output.add(
+                mapOf(
+                    "relativePath" to relativePath,
+                    "uri" to entry.uri.toString(),
+                    "name" to name,
+                    "size" to size,
+                    "modifiedMillis" to modifiedMillis
+                )
+            )
+        }
+    }
+
+    private fun isSupportedSubtitleFileName(name: String): Boolean {
+        val extension = name.substringAfterLast('.', "").lowercase()
+        return extension in SUPPORTED_SUBTITLE_EXTENSIONS
     }
 
     private fun getSafFileMetadata(uriString: String): Map<String, Any> {

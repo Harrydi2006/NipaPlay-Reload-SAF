@@ -145,20 +145,29 @@ class WatchHistoryManager {
       // 设置历史文件路径
       _historyFilePath = path.join(appDir.path, _historyFileName);
       
-      // 检查是否已迁移到数据库
-      final dbFile = io.File(path.join(appDir.path, 'watch_history.db'));
-      _migratedToDatabase = dbFile.existsSync();
-      
-      // 如果已迁移到数据库，则只从数据库加载
-      if (_migratedToDatabase) {
-        // 从数据库预加载缓存
-        await _preloadCacheFromDatabase();
-      } else {
-        // 否则使用旧的JSON文件逻辑
+      // 统一以 SQLite 数据库为准（本应用其余部分 WatchHistoryProvider / 媒体库
+      // 页面始终只从 SQLite 读取）。
+      //
+      // 关键修复：旧逻辑用 `dbFile.existsSync()` 一次性决定走 JSON 还是数据库，
+      // 强依赖初始化时序——若数据库文件先被别处创建，本管理器就误判“已迁移”，
+      // 把后续写入（含扫描结果）全写进了 JSON；而媒体库只读数据库，导致扫描到
+      // 的番剧永远进不了媒体库。
+      //
+      // 现改为：无论数据库是否已存在，只要 JSON 里还有残留数据（首次安装、或
+      // 之前因该 bug 写进 JSON 的扫描结果），都读出来迁移进数据库，然后统一切换
+      // 为数据库存储并移除 JSON，确保读写同一个库、且与时序无关。
+      final io.File jsonFile = io.File(_historyFilePath);
+      final bool hasJsonData = jsonFile.existsSync();
+
+      if (hasJsonData) {
+        // 确保下面的 JSON 读取逻辑不被“已迁移”守卫跳过。
+        _migratedToDatabase = false;
         await _checkAndRecoverFromBackup();
         await _loadCacheFromFile();
       }
-      
+
+      await _migrateCacheToDatabase(removeJsonAfter: hasJsonData);
+
       _initialized = true;
     } catch (e) {
       debugPrint('初始化观看历史管理器失败: $e');
@@ -166,6 +175,45 @@ class WatchHistoryManager {
     }
   }
   
+  // 将当前 JSON 缓存迁移进 SQLite，并切换为以数据库为准。
+  // 与初始化时序无关：无论数据库是否已存在都安全调用（insertOrUpdate 以 file_path
+  // 为主键，幂等且不会丢失数据库里已有记录）。
+  // [removeJsonAfter] 为 true 时，迁移成功后备份并移除 JSON 文件，避免下次重复
+  // 迁移或复活已被删除的记录。
+  static Future<void> _migrateCacheToDatabase({bool removeJsonAfter = false}) async {
+    if (kIsWeb) return;
+    try {
+      final db = WatchHistoryDatabase.instance;
+      final itemsToMigrate = List<WatchHistoryItem>.from(_cachedItems);
+      for (final item in itemsToMigrate) {
+        await db.insertOrUpdateWatchHistory(item);
+      }
+      _migratedToDatabase = true;
+      // 重新从数据库加载，保证内存缓存与数据库完全一致（含数据库里原有记录）。
+      await _preloadCacheFromDatabase();
+      if (itemsToMigrate.isNotEmpty) {
+        debugPrint('观看历史已迁移到数据库，迁移记录数=${itemsToMigrate.length}');
+      }
+
+      if (removeJsonAfter && itemsToMigrate.isNotEmpty) {
+        try {
+          final io.File jsonFile = io.File(_historyFilePath);
+          if (jsonFile.existsSync()) {
+            await jsonFile.copy('$_historyFilePath.bak.migrated');
+            await jsonFile.delete();
+            debugPrint('原 JSON 历史文件已备份并移除');
+          }
+        } catch (e) {
+          debugPrint('迁移后移除 JSON 文件失败（不影响迁移结果）: $e');
+        }
+      }
+    } catch (e) {
+      // 迁移失败时维持 JSON 存储，避免数据丢失。
+      _migratedToDatabase = false;
+      debugPrint('迁移观看历史到数据库失败，继续使用JSON存储: $e');
+    }
+  }
+
   // 从数据库预加载缓存
   static Future<void> _preloadCacheFromDatabase() async {
     try {
@@ -506,7 +554,7 @@ class WatchHistoryManager {
   // 添加或更新历史记录
   static Future<void> addOrUpdateHistory(WatchHistoryItem item) async {
     if (!_initialized) await initialize();
-    
+
     // 如果已迁移到数据库，则直接使用数据库API
     if (_migratedToDatabase) {
       try {
@@ -779,6 +827,31 @@ class WatchHistoryManager {
     } catch (e) {
       return null;
     }
+  }
+
+  // 获取某一集对应的所有本地文件记录（同集多文件，例如 PV 被误刮削成某集）。
+  // 按最近观看时间倒序返回，列表为空表示该集暂无本地文件。
+  static Future<List<WatchHistoryItem>> getHistoriesByEpisode(
+      int animeId, int episodeId) async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    if (_migratedToDatabase) {
+      try {
+        final db = WatchHistoryDatabase.instance;
+        return await db.getHistoriesByEpisode(animeId, episodeId);
+      } catch (e) {
+        debugPrint('从数据库获取剧集多文件历史记录失败: $e');
+        // 回退到内存缓存。
+      }
+    }
+
+    final items = _cachedItems
+        .where((item) => item.animeId == animeId && item.episodeId == episodeId)
+        .toList();
+    items.sort((a, b) => b.lastWatchTime.compareTo(a.lastWatchTime));
+    return items;
   }
 
   // 获取缓存中的所有历史记录项 (同步方法)

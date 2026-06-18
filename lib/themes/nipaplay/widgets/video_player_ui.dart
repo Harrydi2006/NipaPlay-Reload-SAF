@@ -94,7 +94,7 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
   Widget _buildDanmakuOverlay(VideoPlayerState videoState) {
     final isNextKernel = DanmakuKernelFactory.getKernelType() ==
         DanmakuRenderEngine.nipaplayNext;
-    return ValueListenableBuilder<double>(
+    final overlay = ValueListenableBuilder<double>(
       valueListenable: videoState.playbackTimeMs,
       child: DanmakuOverlay(
         key: ValueKey(
@@ -123,6 +123,16 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
           opacity: videoState.mappedDanmakuOpacity,
         );
       },
+    );
+
+    // 弹幕垂直偏移：整体下移弹幕图层，规避刘海屏/挖孔屏遮挡顶部弹幕。
+    final double verticalOffset = videoState.danmakuVerticalOffset;
+    if (verticalOffset <= 0) {
+      return overlay;
+    }
+    return Padding(
+      padding: EdgeInsets.only(top: verticalOffset),
+      child: overlay,
     );
   }
 
@@ -858,7 +868,7 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                       highPriorityAnimation: !videoState.isInFinalLoadingPhase,
                       animeTitle: videoState.animeTitle,
                       episodeTitle: videoState.episodeTitle,
-                      fileName: videoState.currentVideoPath?.split('/').last,
+                      fileName: videoState.currentVideoDisplayName,
                       animeId: videoState.animeId,
                     ),
                 ],
@@ -978,9 +988,8 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                                               !videoState.isInFinalLoadingPhase,
                                           animeTitle: videoState.animeTitle,
                                           episodeTitle: videoState.episodeTitle,
-                                          fileName: videoState.currentVideoPath
-                                              ?.split('/')
-                                              .last,
+                                          fileName:
+                                              videoState.currentVideoDisplayName,
                                           animeId: videoState.animeId,
                                         ),
                                       ),
@@ -1063,9 +1072,7 @@ class _VideoPlayerUIState extends State<VideoPlayerUI>
                                             episodeTitle:
                                                 videoState.episodeTitle,
                                             fileName: videoState
-                                                .currentVideoPath
-                                                ?.split('/')
-                                                .last,
+                                                .currentVideoDisplayName,
                                             animeId: videoState.animeId,
                                           ),
                                         ),

@@ -23,6 +23,11 @@ class WatchHistoryProvider extends ChangeNotifier {
   // ScanService实例，用于监听扫描完成事件
   ScanService? _scanService;
 
+  // 记录上一次观察到的扫描状态，用于检测“扫描中 -> 空闲”的下降沿。
+  // 不依赖 scanJustCompleted 标志，避免与 DashboardHomePage 等其它监听器争用
+  // acknowledgeScanCompleted（谁先确认就把标志清掉，另一个就刷新不到）。
+  bool _wasScanning = false;
+
   List<WatchHistoryItem> get history => _history;
   List<WatchHistoryItem> get continueWatchingItems {
     final filtered = _history.where(_shouldDisplayInContinueWatching);
@@ -52,15 +57,21 @@ class WatchHistoryProvider extends ChangeNotifier {
   void _onScanServiceStateChanged() {
     if (_scanService == null) return;
 
-    //debugPrint('WatchHistoryProvider: ScanService状态变化 - scanJustCompleted: ${_scanService!.scanJustCompleted}');
+    // 主路径：检测“扫描中 -> 空闲”的下降沿，独立于 scanJustCompleted，
+    // 避免被其它监听器抢先 acknowledge 导致本 Provider 收不到刷新事件。
+    final bool isScanning = _scanService!.isScanning;
+    if (_wasScanning && !isScanning) {
+      // 延迟刷新，确保扫描结果已写入数据库
+      Future.delayed(const Duration(milliseconds: 150), () {
+        refresh();
+      });
+    }
+    _wasScanning = isScanning;
 
+    // 兼容路径：若仍能读到 scanJustCompleted 标志，也触发一次刷新。
     if (_scanService!.scanJustCompleted) {
-      //debugPrint('WatchHistoryProvider: 检测到扫描完成，自动刷新历史记录');
-
-      // 延迟刷新，确保扫描结果已保存到数据库
       Future.delayed(const Duration(milliseconds: 100), () {
         refresh();
-        // 确认扫描完成事件已处理
         _scanService!.acknowledgeScanCompleted();
       });
     }
@@ -185,6 +196,16 @@ class WatchHistoryProvider extends ChangeNotifier {
       // 跳过WebDAV和SMB路径的文件存在性验证
       if (originalPath.startsWith('webdav://') ||
           originalPath.startsWith('smb://')) {
+        validItems.add(item);
+        continue;
+      }
+
+      // 跳过 Android SAF content:// URI 的文件存在性验证。
+      // 这类路径不是真实文件系统路径，io.File 无法判断其存在性；
+      // 交给底层播放器/ContentResolver 处理。若在此用 File 检查，会把
+      // SAF 扫描进来的本地视频全部误判为无效，进而从数据库删除，导致
+      // 本地媒体库为空。
+      if (originalPath.startsWith('content://')) {
         validItems.add(item);
         continue;
       }

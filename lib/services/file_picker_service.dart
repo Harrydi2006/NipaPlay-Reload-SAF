@@ -763,6 +763,10 @@ class FilePickerService {
   Future<String?> _pickSubtitleFileAndroid() async {
     try {
       // 使用Intent获取文件路径而不是内容
+      // 不限制 extra_mime_types：很多字幕扩展名（.ass/.ssa/.srt/.sub）在 Android
+      // 上没有注册对应 MIME，一旦设置 EXTRA_MIME_TYPES 过滤就会被系统选择器灰掉、
+      // 根本不显示。改为 type=*/* 且不传 extra_mime_types，让所有文件都可选中，
+      // 由用户自行挑选字幕文件。
       final result =
           await const MethodChannel('plugins.flutter.io/file_selector')
               .invokeMethod<String>('pickFilePathOnly', {
@@ -774,7 +778,6 @@ class FilePickerService {
         ],
         'confirmButtonText': '选择字幕文件',
         'type': "*/*",
-        'extra_mime_types': ['text/*', 'application/*']
       });
 
       if (result == null || result.isEmpty) {

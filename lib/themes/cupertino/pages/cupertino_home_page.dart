@@ -2761,6 +2761,9 @@ class _CupertinoHomePageState extends State<CupertinoHomePage> {
     } else {
       if (kIsWeb) {
         fileExists = true;
+      } else if (filePath.startsWith('content://')) {
+        // Android SAF content:// URI 不能用 dart:io.File 判断，交给底层播放器
+        fileExists = true;
       } else {
         final file = File(filePath);
         fileExists = file.existsSync();

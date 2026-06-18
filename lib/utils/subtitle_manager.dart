@@ -9,6 +9,8 @@ import 'subtitle_parser.dart';
 import 'storage_service.dart';
 import '../../player_abstraction/player_abstraction.dart';
 import 'package:nipaplay/services/remote_subtitle_service.dart';
+import 'package:nipaplay/services/android_saf_service.dart';
+import 'package:nipaplay/services/subtitle_service.dart';
 import 'package:nipaplay/utils/subtitle_file_utils.dart';
 import 'package:nipaplay/utils/subtitle_language_utils.dart';
 
@@ -858,6 +860,177 @@ class SubtitleManager extends ChangeNotifier {
   }
 
   // 自动检测并加载同名字幕文件
+  /// 从 content:// 文档 URI 推导其所在目录（解码后的 docId 去掉文件名部分）。
+  String? _safDocumentDir(String contentUri) {
+    const String marker = '/document/';
+    final int idx = contentUri.indexOf(marker);
+    if (idx < 0) return null;
+    String docId = contentUri.substring(idx + marker.length);
+    final int q = docId.indexOf('?');
+    if (q >= 0) docId = docId.substring(0, q);
+    try {
+      docId = Uri.decodeComponent(docId);
+    } catch (_) {
+      // 解码失败时按原串处理。
+    }
+    final int slash = docId.lastIndexOf('/');
+    return slash < 0 ? '' : docId.substring(0, slash);
+  }
+
+  /// 从 content:// 文档 URI 推导文件名（不含扩展名）。
+  String _safDocumentBaseName(String contentUri) {
+    const String marker = '/document/';
+    final int idx = contentUri.indexOf(marker);
+    String docId =
+        idx < 0 ? contentUri : contentUri.substring(idx + marker.length);
+    final int q = docId.indexOf('?');
+    if (q >= 0) docId = docId.substring(0, q);
+    try {
+      docId = Uri.decodeComponent(docId);
+    } catch (_) {
+      // 解码失败时按原串处理。
+    }
+    return p.basenameWithoutExtension(docId);
+  }
+
+  /// 字幕所在目录是否为「视频同目录」或「视频目录下的字幕关键词子文件夹」。
+  ///
+  /// 例如视频在 `.../anime`，字幕在 `.../anime/Subs` 或 `.../anime/字幕` 也算匹配，
+  /// 以支持把字幕单独放在 Subs / Subtitles / 字幕 等子目录的常见整理方式。
+  bool _isVideoDirOrSubtitleSubFolder(String? subtitleDir, String videoDir) {
+    if (subtitleDir == null) return false;
+    if (subtitleDir == videoDir) return true;
+    if (!subtitleDir.startsWith('$videoDir/')) return false;
+    const Set<String> subtitleFolderKeywords = {
+      'sub', 'subs', 'subtitle', 'subtitles', 'subtitulos',
+      'subtitle files', '字幕', '字幕文件', '外挂字幕', '外掛字幕',
+    };
+    final String relative = subtitleDir.substring(videoDir.length + 1);
+    // 子路径上任一层目录命中关键词即可（兼容 Subs/CHS 这类两级结构）。
+    return relative
+        .split('/')
+        .any((segment) => subtitleFolderKeywords.contains(segment.toLowerCase()));
+  }
+
+  /// Android SAF：列出 content:// 视频同目录的字幕文件，按文件名匹配后复制到
+  /// 本地缓存再加载（外挂字幕流程依赖真实文件路径，无法直接吃 content://）。
+  ///
+  /// 注意：原生视频扫描只返回视频，必须用专门的字幕扫描接口才能拿到字幕文件。
+  Future<bool> _autoDetectAndLoadSafSubtitle(String videoUri) async {
+    try {
+      final int docIdx = videoUri.indexOf('/document/');
+      if (docIdx <= 0) return false;
+      final String treeUri = videoUri.substring(0, docIdx);
+
+      final entries = await AndroidSafService.scanSubtitleDirectory(treeUri);
+      debugPrint('SubtitleManager: SAF 字幕扫描到 ${entries.length} 个字幕文件');
+      if (entries.isEmpty) return false;
+
+      // 视频名（不含扩展名），用于前缀匹配（兼容 xxx.sc.ass / xxx.tc.ass 双扩展名）。
+      final String videoBase = _safDocumentBaseName(videoUri).toLowerCase();
+      final String? videoDir = _safDocumentDir(videoUri);
+      if (videoBase.isEmpty) return false;
+
+      // 字幕文件名（去掉最后一个扩展名）是否与视频名匹配。
+      bool nameMatches(String subName) {
+        final String lower = subName.toLowerCase();
+        final String noExt = lower.contains('.')
+            ? lower.substring(0, lower.lastIndexOf('.'))
+            : lower;
+        // 完全同名，或字幕名以视频名开头（覆盖 .sc / .tc / .chs 等语言后缀）。
+        return noExt == videoBase || noExt.startsWith(videoBase);
+      }
+
+      final List<AndroidSafFileEntry> matched =
+          entries.where((entry) => nameMatches(entry.name)).toList();
+      if (matched.isEmpty) {
+        debugPrint('SubtitleManager: SAF 未找到与视频名匹配的字幕');
+        return false;
+      }
+
+      // 优先采用：视频同目录，或视频目录下名为 sub/字幕 等关键词的子文件夹里的字幕。
+      // 若目录解码比对不可靠导致空集，则退回所有同名匹配项。
+      List<AndroidSafFileEntry> candidates = matched;
+      if (videoDir != null) {
+        final preferred = matched
+            .where((entry) =>
+                _isVideoDirOrSubtitleSubFolder(_safDocumentDir(entry.uri), videoDir))
+            .toList();
+        if (preferred.isNotEmpty) candidates = preferred;
+      }
+
+      // 选择最佳字幕：完全同名 > 名字最短（最贴近）的前缀匹配。
+      candidates.sort((a, b) => a.name.length.compareTo(b.name.length));
+      AndroidSafFileEntry best = candidates.first;
+      for (final candidate in candidates) {
+        final String lowerName = candidate.name.toLowerCase();
+        // 形如 "视频名.srt"（仅单一扩展名，无 .sc/.tc 等语言后缀）的完全同名字幕最优先。
+        if (lowerName.startsWith('$videoBase.') &&
+            lowerName.substring(videoBase.length + 1).split('.').length <= 1) {
+          best = candidate;
+          break;
+        }
+      }
+
+      debugPrint('SubtitleManager: SAF 默认激活字幕: ${best.name}');
+
+      // 把所有匹配到的同目录字幕都复制到缓存并登记为可切换轨道（如简/繁双字幕），
+      // 默认激活 best；其余可在"字幕轨道"菜单里手动切换。
+      final List<Map<String, dynamic>> subtitleInfos = [];
+      String? bestCachedPath;
+      String bestName = best.name;
+      for (final candidate in candidates) {
+        final String? cached = await AndroidSafService.copyToCache(candidate.uri);
+        if (cached == null || cached.isEmpty || !File(cached).existsSync()) {
+          continue;
+        }
+        final String ext = p.extension(candidate.name).toLowerCase();
+        subtitleInfos.add({
+          'path': cached,
+          'name': candidate.name,
+          'type': ext.isNotEmpty ? ext.substring(1) : 'ass',
+          'addTime': DateTime.now().millisecondsSinceEpoch,
+          'isActive': false,
+        });
+        if (identical(candidate, best)) {
+          bestCachedPath = cached;
+          bestName = candidate.name;
+        }
+      }
+      if (subtitleInfos.isEmpty) return false;
+      bestCachedPath ??= subtitleInfos.first['path'] as String;
+
+      await Future.delayed(_autoLoadPlayerReadyDelay);
+      setExternalSubtitle(bestCachedPath, isManualSetting: false);
+      // 用 content:// 原始 URI 作为映射键，下次可直接复用缓存路径。
+      saveVideoSubtitleMapping(videoUri, bestCachedPath);
+
+      // 持久化全部候选（best 激活），供两套主题的字幕轨道菜单读取并切换。
+      unawaited(SubtitleService().addExternalSubtitles(
+        videoUri,
+        subtitleInfos,
+        activePath: bestCachedPath,
+      ));
+
+      await Future.delayed(_autoLoadStateSettleDelay);
+      // 通知已打开的字幕菜单实时刷新：先登记非激活项，最后登记激活项。
+      if (onExternalSubtitleAutoLoaded != null) {
+        for (final info in subtitleInfos) {
+          if (info['path'] == bestCachedPath) continue;
+          onExternalSubtitleAutoLoaded!(
+              info['path'] as String, info['name'] as String);
+        }
+        onExternalSubtitleAutoLoaded!(bestCachedPath, bestName);
+      }
+      debugPrint(
+          'SubtitleManager: SAF 自动加载 ${subtitleInfos.length} 条字幕, 激活: $bestName');
+      return true;
+    } catch (e) {
+      debugPrint('SubtitleManager: SAF 自动字幕检测失败: $e');
+      return false;
+    }
+  }
+
   Future<void> autoDetectAndLoadSubtitle(String videoPath) async {
     if (kIsWeb) {
       debugPrint('SubtitleManager: Web平台跳过自动检测字幕文件');
@@ -967,6 +1140,18 @@ class SubtitleManager extends ChangeNotifier {
       }
 
       // 需求：即使存在内嵌字幕，也应优先尝试自动加载外挂字幕。
+
+      // Android SAF content:// 视频：io.File 无法枚举目录，改用 SAF 列出同目录
+      // 字幕文件，按文件名匹配后复制到本地缓存再加载（外挂字幕流程依赖真实路径）。
+      if (!kIsWeb &&
+          Platform.isAndroid &&
+          videoPath.startsWith('content://')) {
+        final bool handled = await _autoDetectAndLoadSafSubtitle(videoPath);
+        if (!handled) {
+          debugPrint('SubtitleManager: SAF 同目录未找到匹配的字幕文件');
+        }
+        return;
+      }
 
       // 检查视频文件是否存在
       final videoFile = File(videoPath);

@@ -17,6 +17,8 @@ import 'package:nipaplay/services/external_player_service.dart';
 import 'package:nipaplay/services/smb_proxy_service.dart';
 import 'package:nipaplay/services/smb_service.dart';
 import 'package:nipaplay/services/webdav_service.dart';
+import 'package:nipaplay/services/android_saf_service.dart';
+import 'package:nipaplay/models/watch_history_model.dart';
 import 'package:nipaplay/providers/shared_remote_library_provider.dart';
 import 'package:nipaplay/utils/media_source_utils.dart';
 import 'package:nipaplay/utils/shared_remote_history_helper.dart';
@@ -99,6 +101,9 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
       } else if (MediaSourceUtils.isWebDavPath(path)) {
         _dataSourceType = 'webdav';
         await _loadWebDavEpisodes(path);
+      } else if (Platform.isAndroid && path.startsWith('content://')) {
+        _dataSourceType = 'filesystem';
+        await _loadAndroidSafSiblings(path);
       } else {
         _dataSourceType = 'filesystem';
         await _loadFileSystemEpisodes(path);
@@ -250,6 +255,113 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
     }
 
     _episodes = files.map((file) => file.path).toList();
+  }
+
+  /// Android SAF：根据当前播放的 content:// 文档 URI，列出同一目录下的兄弟视频。
+  /// io.File 无法枚举 content:// 目录，因此从文档 URI 还原出 tree URI，递归扫描后
+  /// 按“相对路径的父目录前缀”筛出同目录视频。
+  Future<void> _loadAndroidSafSiblings(String currentUri) async {
+    final int docIdx = currentUri.indexOf('/document/');
+    if (docIdx <= 0) {
+      throw Exception('无法解析 SAF 视频路径');
+    }
+    final String treeUri = currentUri.substring(0, docIdx);
+
+    final List<AndroidSafFileEntry> entries =
+        await AndroidSafService.scanDirectory(treeUri);
+
+    // 优先用原生扫描返回的 relativePath 定位同目录（无百分号编码，跨条目稳定）。
+    // 历史里保存的 URI 与扫描返回的 URI 编码可能不一致，直接比 URI 会失败，
+    // 导致同目录匹配为空、列表只剩当前一项。
+    final AndroidSafFileEntry? current =
+        _findCurrentSafEntry(entries, currentUri);
+
+    List<AndroidSafFileEntry> siblings;
+    if (current != null) {
+      final String currentParent = _relativeParent(current.relativePath);
+      siblings = entries
+          .where((entry) => _relativeParent(entry.relativePath) == currentParent)
+          .toList();
+    } else {
+      final String? currentDir = _safDocumentDir(currentUri);
+      siblings = entries
+          .where((entry) => _safDocumentDir(entry.uri) == currentDir)
+          .toList();
+    }
+    siblings.sort((a, b) => WebDAVFileSorter.naturalCompare(a.name, b.name));
+
+    final List<String> result = siblings
+        .map((entry) =>
+            (current != null && entry == current) ? currentUri : entry.uri)
+        .toList();
+
+    // 兜底：筛不到同目录视频时，至少保留当前正在播放的视频，避免列表为空。
+    _episodes = result.isEmpty ? [currentUri] : result;
+  }
+
+  /// 在扫描结果中定位当前播放条目：精确 URI → 解码 docId → 解码文件名。
+  AndroidSafFileEntry? _findCurrentSafEntry(
+    List<AndroidSafFileEntry> entries,
+    String currentUri,
+  ) {
+    for (final entry in entries) {
+      if (entry.uri == currentUri) return entry;
+    }
+    final String? currentDocId = _safDecodedDocId(currentUri);
+    if (currentDocId != null) {
+      for (final entry in entries) {
+        if (_safDecodedDocId(entry.uri) == currentDocId) return entry;
+      }
+    }
+    final String? currentName = _safDecodedFileName(currentUri);
+    if (currentName != null && currentName.isNotEmpty) {
+      final matches =
+          entries.where((entry) => entry.name == currentName).toList();
+      if (matches.length == 1) return matches.first;
+    }
+    return null;
+  }
+
+  /// relativePath 的父目录（真实 '/' 分隔，根目录文件返回空串）。
+  String _relativeParent(String relativePath) {
+    final int slashIdx = relativePath.lastIndexOf('/');
+    return slashIdx < 0 ? '' : relativePath.substring(0, slashIdx);
+  }
+
+  /// 解码 content:// 文档 URI 的 docId（去掉 query），失败时返回原串。
+  String? _safDecodedDocId(String contentUri) {
+    const String marker = '/document/';
+    final int docIdx = contentUri.indexOf(marker);
+    if (docIdx < 0) {
+      return null;
+    }
+    String docId = contentUri.substring(docIdx + marker.length);
+    final int queryIdx = docId.indexOf('?');
+    if (queryIdx >= 0) {
+      docId = docId.substring(0, queryIdx);
+    }
+    try {
+      docId = Uri.decodeComponent(docId);
+    } catch (_) {
+      // 解码失败时按原串处理。
+    }
+    return docId;
+  }
+
+  /// 从 content:// 文档 URI 推导文件名（含扩展名，已解码）。
+  String? _safDecodedFileName(String contentUri) {
+    final String? docId = _safDecodedDocId(contentUri);
+    if (docId == null) return null;
+    final int slashIdx = docId.lastIndexOf('/');
+    return slashIdx < 0 ? docId : docId.substring(slashIdx + 1);
+  }
+
+  /// 从 content:// 文档 URI 推导其所在目录（解码后的 docId 去掉文件名部分）。
+  String? _safDocumentDir(String contentUri) {
+    final String? docId = _safDecodedDocId(contentUri);
+    if (docId == null) return null;
+    final int slashIdx = docId.lastIndexOf('/');
+    return slashIdx < 0 ? '' : docId.substring(0, slashIdx);
   }
 
   Future<void> _loadSharedRemoteManagementEpisodes(String path) async {
@@ -524,9 +636,21 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
         }
         return 'Emby 剧集';
       default:
+        // content:// (SAF) URI：用健壮解码器取文件名。含 [ ] + 空格 等字符的 URI
+        // 走 pathSegments + 二次 decodeComponent 会抛异常，导致列表项渲染为空白。
+        if (path.startsWith('content://')) {
+          final String? name = _safDecodedFileName(path);
+          if (name != null && name.trim().isNotEmpty) {
+            return name;
+          }
+        }
         final uri = Uri.tryParse(path);
         if (uri != null && uri.pathSegments.isNotEmpty) {
-          return Uri.decodeComponent(uri.pathSegments.last);
+          try {
+            return p.basename(Uri.decodeComponent(uri.pathSegments.last));
+          } catch (_) {
+            return p.basename(uri.pathSegments.last);
+          }
         }
         return path.split('/').last;
     }
@@ -663,8 +787,16 @@ class _CupertinoPlaylistPaneState extends State<CupertinoPlaylistPane> {
         }
       }
 
+      // Android SAF：按路径查出扫描时存入的历史记录，拿到正确的刮削标题与
+      // animeId/episodeId，避免标题回退成 primary%3A... 的编码串。
+      WatchHistoryItem? safHistory;
+      if (path.startsWith('content://')) {
+        safHistory = await WatchHistoryManager.getHistoryItem(path);
+      }
+
       await widget.videoState.initializePlayer(
         path,
+        historyItem: safHistory,
         playbackSession: playbackSession,
       );
       if (!mounted) return;

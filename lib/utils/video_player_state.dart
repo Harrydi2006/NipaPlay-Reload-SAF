@@ -554,6 +554,11 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   double _danmakuDisplayArea =
       1.0; // 默认全屏显示（0.0=单行，1.0=全屏，0.67=2/3，0.33=1/3，0.25=1/4，0.125=1/8）
 
+  // 弹幕垂直偏移设置：把整个弹幕图层整体向下移动的逻辑像素，用于规避刘海屏/挖孔屏遮挡顶部弹幕。
+  final String _danmakuVerticalOffsetKey = 'danmaku_vertical_offset';
+  static const double maxDanmakuVerticalOffset = 200.0;
+  double _danmakuVerticalOffset = 0.0;
+
   // 弹幕速度设置
   final String _danmakuSpeedMultiplierKey = 'danmaku_speed_multiplier';
   final double _minDanmakuSpeedMultiplier = 0.5;
@@ -1233,6 +1238,7 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   String get subtitleFontDir => _subtitleFontDir;
   SubtitleStyleOverrideMode get subtitleOverrideMode => _subtitleOverrideMode;
   double get danmakuDisplayArea => _danmakuDisplayArea;
+  double get danmakuVerticalOffset => _danmakuVerticalOffset;
   double get danmakuSpeedMultiplier => _danmakuSpeedMultiplier;
   double get danmakuDfmPlusTrackGap => _danmakuDfmPlusTrackGap;
   double get danmakuScrollDurationSeconds =>
@@ -1257,6 +1263,14 @@ class VideoPlayerState extends ChangeNotifier implements WindowListener {
   List<String> get crtShaderPaths => List.unmodifiable(_crtShaderPaths);
   Duration get videoDuration => _videoDuration;
   String? get currentVideoPath => _currentVideoPath;
+
+  /// 当前视频用于显示的文件名（已对 content:// 等编码路径做解码）。
+  /// UI 顶部标题在没有刮削番剧名时回退显示此名称，避免出现 primary%3A... 乱码。
+  String? get currentVideoDisplayName {
+    final path = _currentVideoPath;
+    if (path == null || path.trim().isEmpty) return null;
+    return safeDisplayFileNameFromPath(path, withExtension: false);
+  }
   String? get currentActualPlayUrl => _currentActualPlayUrl; // 当前实际播放URL
   PlaybackSession? get currentPlaybackSession => _currentPlaybackSession;
   String get danmakuOverlayKey => _danmakuOverlayKey; // 弹幕覆盖层的稳定key
