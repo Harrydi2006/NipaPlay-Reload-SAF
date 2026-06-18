@@ -1,0 +1,91 @@
+name: Release Android (SAF Fork)
+
+# 手动触发：构建并用自有固定签名密钥签名 Android APK，然后自动创建 GitHub Release。
+# 需要在仓库 Settings -> Secrets and variables -> Actions 配置以下 secrets：
+#   SIGNING_KEY         Base64 编码的 keystore(.jks)
+#   KEY_STORE_PASSWORD  keystore 密码
+#   ALIAS               密钥别名
+#   KEY_PASSWORD        密钥密码
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号(用于 APK 文件名与 Release 标签)，例如 1.0.0-saf'
+        required: true
+        type: string
+      prerelease:
+        description: '标记为预发布(Pre-release)'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build, Sign & Publish Android APK
+    runs-on: ubuntu-latest
+    env:
+      FVP_DEPS_URL: https://github.com/wang-bin/mdk-sdk/releases/latest/download/
+      FVP_DEPS_LATEST: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Free workspace disk (pre-cache)
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/lib/android/sdk/system-images || true
+          sudo rm -rf /usr/local/lib/android/sdk/emulator || true
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/* || true
+          df -h
+
+      - name: Setup Flutter Environment
+        id: setup
+        uses: ./.github/actions/setup-flutter
+
+      - name: Generate build info json
+        shell: bash
+        run: python3 .github/workflows/scripts/generate-build-info-json.py assets/build_info.json
+
+      - name: Pre-download Gradle Wrapper
+        shell: bash
+        run: |
+          cd android
+          chmod +x ./gradlew
+          ./gradlew --version || true
+        continue-on-error: true
+
+      - name: Build & Sign Android APK
+        uses: ./.github/actions/build-android
+        with:
+          app-version: ${{ inputs.version }}
+          signing-key: ${{ secrets.SIGNING_KEY }}
+          keystore-password: ${{ secrets.KEY_STORE_PASSWORD }}
+          key-alias: ${{ secrets.ALIAS }}
+          key-password: ${{ secrets.KEY_PASSWORD }}
+
+      - name: List signed APKs
+        shell: bash
+        run: ls -lh build/app/outputs/apk/release/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: NipaPlay (SAF Fork) v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: build/app/outputs/apk/release/NipaPlay-*.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
