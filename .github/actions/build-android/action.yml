@@ -180,9 +180,9 @@ runs:
         ls -la build/app/outputs/flutter-apk/
 
         # 创建签名配置文件
-        # 注意：secret 在不同平台复制时可能混入 \r 或换行，先清掉所有空白字符再解码，
-        # 否则 GNU base64 -d 会报 "invalid input"。
-        printf '%s' "${{ inputs.signing-key }}" | tr -d '[:space:]' | base64 -d > keystore.jks
+        # 注意：secret 在不同平台复制时可能混入 \r、换行或其它不可见字符，
+        # 这里只保留 base64 合法字符再解码，否则 GNU base64 -d 会报 "invalid input"。
+        printf '%s' "${{ inputs.signing-key }}" | tr -dc 'A-Za-z0-9+/=' | base64 -d > keystore.jks
         if [ ! -s keystore.jks ]; then
           echo "错误：keystore.jks 解码后为空，请检查 SIGNING_KEY secret 是否为有效的 base64。"
           exit 1
